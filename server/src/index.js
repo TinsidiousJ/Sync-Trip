@@ -10,24 +10,36 @@ app.use(cors());
 app.use(express.json());
 
 app.get("/health", (req, res) => {
-  res.json({ ok: true });
+  res.json({
+    ok: true,
+    mongoConnected: mongoose.connection.readyState === 1,
+  });
 });
 
-async function start() {
-  try {
-    if (!process.env.MONGODB_URI) {
-      console.log("⚠️ MONGODB_URI not set yet (OK for now). Starting without DB...");
-    } else {
-      await mongoose.connect(process.env.MONGODB_URI);
-      console.log("✅ Connected to MongoDB");
-    }
+const port = Number(process.env.PORT) || 4000;
 
-    const port = process.env.PORT || 4000;
-    app.listen(port, () => console.log(`✅ Server running on port ${port}`));
+app.listen(port, () => {
+  console.log(`Server running on port ${port}`);
+});
+
+async function connectMongo() {
+  const uri = process.env.MONGODB_URI;
+
+  if (!uri) {
+    console.error("MONGODB_URI missing in server/.env");
+    return;
+  }
+
+  try {
+    console.log("Connecting to MongoDB...");
+    await mongoose.connect(uri, {
+      serverSelectionTimeoutMS: 7000,
+      connectTimeoutMS: 7000,
+    });
+    console.log("Connected to MongoDB");
   } catch (err) {
-    console.error("❌ Server failed to start:", err.message);
-    process.exit(1);
+    console.error("MongoDB connection failed:", err.message);
   }
 }
 
-start();
+connectMongo();
