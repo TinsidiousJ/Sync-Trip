@@ -65,15 +65,19 @@ export default function CreateSession() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           sessionCode,
-          displayName,
+          displayName: displayName.trim(),
           planningType,
-          sessionName,
-          destination,
+          sessionName: sessionName.trim(),
+          destination: destination.trim(),
         }),
       });
 
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Failed to create session");
+
+      localStorage.setItem("sessionCode", data.sessionCode);
+      localStorage.setItem("userId", data.userId);
+      localStorage.setItem("host", "1");
 
       navigate(`/lobby/${data.sessionCode}?userId=${data.userId}&host=1`);
     } catch (e) {

@@ -4,43 +4,14 @@ import dotenv from "dotenv";
 import mongoose from "mongoose";
 import crypto from "crypto";
 
+import Session from "./models/Session.js";
+import User from "./models/User.js";
+
 dotenv.config();
 
 const app = express();
 app.use(cors());
 app.use(express.json());
-const SessionSchema = new mongoose.Schema(
-  {
-    sessionCode: { type: String, required: true, unique: true, index: true },
-    stage: { type: String, enum: ["DRAFT", "LOBBY"], default: "DRAFT" },
-
-    hostUserId: { type: String, default: null },
-
-    sessionName: { type: String, default: "" },
-    destination: { type: String, default: "" },
-    planningType: {
-      type: String,
-      enum: ["ACCOMMODATION", "ACTIVITIES"],
-      default: "ACCOMMODATION",
-    },
-
-    isStarted: { type: Boolean, default: false },
-  },
-  { timestamps: true }
-);
-
-const UserSchema = new mongoose.Schema(
-  {
-    userId: { type: String, required: true, index: true },
-    displayName: { type: String, required: true },
-    sessionCode: { type: String, required: true, index: true },
-    joinedAt: { type: Date, default: Date.now },
-  },
-  { timestamps: true }
-);
-
-const Session = mongoose.model("Session", SessionSchema);
-const User = mongoose.model("User", UserSchema);
 
 function generateSessionCode(length = 6) {
   const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
@@ -91,16 +62,8 @@ app.post("/sessions/activate", async (req, res) => {
       return res.status(400).json({ error: "Missing required fields" });
     }
 
-    if (!["ACCOMMODATION", "ACTIVITIES"].includes(planningType)) {
-      return res.status(400).json({ error: "Invalid planningType" });
-    }
-
     const session = await Session.findOne({ sessionCode });
     if (!session) return res.status(404).json({ error: "Session not found" });
-
-    if (session.stage !== "DRAFT") {
-      return res.status(409).json({ error: "Session already activated" });
-    }
 
     const userId = crypto.randomUUID();
 
@@ -109,6 +72,7 @@ app.post("/sessions/activate", async (req, res) => {
     session.sessionName = sessionName;
     session.destination = destination;
     session.planningType = planningType;
+
     await session.save();
 
     await User.create({
@@ -176,8 +140,50 @@ app.get("/sessions/:code/lobby", async (req, res) => {
         planningType: session.planningType,
         isStarted: session.isStarted,
       },
-      users,
+      users: users.map((u) => ({
+        userId: u.userId,
+        displayName: u.displayName,
+        sessionCode: u.sessionCode,
+        joinedAt: u.joinedAt,
+        filters: u.filters || { budgetMin: null, budgetMax: null, tags: [] },
+      })),
     });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.put("/sessions/:code/filters", async (req, res) => {
+  try {
+    const sessionCode = req.params.code;
+    const { userId, filters } = req.body;
+
+    const user = await User.findOne({ sessionCode, userId });
+    if (!user) return res.status(404).json({ error: "User not found" });
+
+    const next = { ...(user.filters?.toObject?.() ?? user.filters ?? {}) };
+
+    if ("budgetMin" in filters)
+      next.budgetMin =
+        filters.budgetMin === "" || filters.budgetMin === null
+          ? null
+          : Number(filters.budgetMin);
+
+    if ("budgetMax" in filters)
+      next.budgetMax =
+        filters.budgetMax === "" || filters.budgetMax === null
+          ? null
+          : Number(filters.budgetMax);
+
+    if ("tags" in filters)
+      next.tags = Array.isArray(filters.tags)
+        ? filters.tags.map((t) => String(t)).filter(Boolean)
+        : [];
+
+    user.filters = next;
+    await user.save();
+
+    res.json({ sessionCode, userId, filters: user.filters });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -186,17 +192,12 @@ app.get("/sessions/:code/lobby", async (req, res) => {
 async function start() {
   try {
     const uri = process.env.MONGODB_URI;
-    if (!uri) throw new Error("MONGODB_URI is missing. Check server/.env");
-
-    await mongoose.connect(uri, {
-      serverSelectionTimeoutMS: 10000,
-      connectTimeoutMS: 10000,
-    });
+    await mongoose.connect(uri);
 
     const port = process.env.PORT || 4000;
     app.listen(port, () => console.log(`Server running on port ${port}`));
   } catch (err) {
-    console.error("Server failed to start:", err.message);
+    console.error("Server failed:", err.message);
     process.exit(1);
   }
 }

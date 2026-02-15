@@ -13,7 +13,6 @@ ReactDOM.createRoot(document.getElementById("root")).render(
         <Route path="/" element={<Landing />} />
         <Route path="/create" element={<CreateSession />} />
         <Route path="/join" element={<JoinSession />} />
-
         <Route path="/lobby/:code" element={<Lobby />} />
       </Routes>
     </BrowserRouter>

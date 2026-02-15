@@ -35,9 +35,14 @@ export default function JoinSession() {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Failed to join session");
 
+      // store session info locally
+      localStorage.setItem("sessionCode", data.sessionCode);
+      localStorage.setItem("userId", data.userId);
+      localStorage.setItem("host", "0");
+
       navigate(`/lobby/${data.sessionCode}?userId=${data.userId}&host=0`);
-    } catch (e) {
-      setError(e.message);
+    } catch (err) {
+      setError(err.message);
     }
   }
 
@@ -49,7 +54,7 @@ export default function JoinSession() {
 
       <form onSubmit={onJoin}>
         <div>
-          <label>Session code</label>
+          <label>Session Code</label>
           <input
             value={sessionCode}
             onChange={(e) => setSessionCode(e.target.value)}
@@ -58,7 +63,7 @@ export default function JoinSession() {
         </div>
 
         <div>
-          <label>Your name</label>
+          <label>Your Name</label>
           <input
             value={displayName}
             onChange={(e) => setDisplayName(e.target.value)}
@@ -66,7 +71,7 @@ export default function JoinSession() {
           />
         </div>
 
-        <button type="submit">Join</button>
+        <button type="submit">Join Session</button>
       </form>
     </div>
   );

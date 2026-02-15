@@ -5,20 +5,47 @@ const sessionSchema = new mongoose.Schema(
     sessionCode: {
       type: String,
       required: true,
-      unique: true
+      unique: true,
+      index: true,
     },
+
+    stage: {
+      type: String,
+      enum: ["DRAFT", "LOBBY"],
+      default: "DRAFT",
+    },
+
+    // Must be optional because /sessions/draft creates a session before host exists
     hostUserId: {
       type: String,
-      required: true
+      default: null,
     },
-    sessionName: String,
-    destination: String,
-    stage: String,
+
+    sessionName: {
+      type: String,
+      default: "",
+    },
+
+    destination: {
+      type: String,
+      default: "",
+    },
+
+    planningType: {
+      type: String,
+      enum: ["ACCOMMODATION", "ACTIVITIES"],
+      default: "ACCOMMODATION",
+    },
+
     isStarted: {
       type: Boolean,
-      default: false
+      default: false,
     },
-    startedAt: Date
+
+    startedAt: {
+      type: Date,
+      default: null,
+    },
   },
   { timestamps: true }
 );

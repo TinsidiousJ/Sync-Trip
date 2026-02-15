@@ -1,80 +1,55 @@
-import express from "express";
-import { v4 as uuidv4 } from "uuid";
-import Session from "../models/Session.js";
-import User from "../models/User.js";
-import generateCode from "../utils/generateCode.js";
+import mongoose from "mongoose";
 
-const router = express.Router();
+const sessionSchema = new mongoose.Schema(
+  {
+    sessionCode: {
+      type: String,
+      required: true,
+      unique: true,
+      index: true,
+    },
 
-router.post("/", async (req, res) => {
-  try {
-    const { displayName, sessionName, destination, stage } = req.body;
+    stage: {
+      type: String,
+      enum: ["DRAFT", "LOBBY"],
+      default: "DRAFT",
+    },
 
-    const sessionCode = generateCode();
-    const userId = uuidv4();
+    hostUserId: {
+      type: String,
+      default: null,
+    },
 
-    const session = await Session.create({
-      sessionCode,
-      hostUserId: userId,
-      sessionName,
-      destination,
-      stage
-    });
+    sessionName: {
+      type: String,
+      default: "",
+    },
 
-    await User.create({
-      userId,
-      displayName,
-      sessionCode,
-      joinedAt: new Date()
-    });
+    destination: {
+      type: String,
+      default: "",
+    },
 
-    res.json({
-      sessionCode,
-      userId,
-      session
-    });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
+    planningType: {
+      type: String,
+      enum: ["ACCOMMODATION", "ACTIVITIES"],
+      default: "ACCOMMODATION",
+    },
+    filters: {
+      budgetMin: { type: Number, default: null },
+      budgetMax: { type: Number, default: null },
+      area: { type: String, default: "" },
+      categories: { type: [String], default: [] },
+    },
 
-router.post("/join", async (req, res) => {
-  try {
-    const { sessionCode, displayName } = req.body;
+    isStarted: {
+      type: Boolean,
+      default: false,
+    },
 
-    const session = await Session.findOne({ sessionCode });
-    if (!session) {
-    return res.status(404).json({ error: "Session not found" });
-    }
+    startedAt: Date,
+  },
+  { timestamps: true }
+);
 
-    const userId = uuidv4();
-
-    await User.create({
-      userId,
-      displayName,
-      sessionCode,
-      joinedAt: new Date()
-    });
-
-    res.json({ sessionCode, userId });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-router.get("/:sessionCode/users", async (req, res) => {
-  try {
-    const users = await User.find({
-      sessionCode: req.params.sessionCode
-    });
-
-    res.json({
-      sessionCode: req.params.sessionCode,
-      users
-    });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-export default router;
+export default mongoose.model("Session", sessionSchema);
