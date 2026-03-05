@@ -1,9 +1,9 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
-import { useParams, useSearchParams } from "react-router-dom";
+import React, { useEffect, useMemo, useState } from "react";
+import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 
 const API_BASE = "http://localhost:4000";
 
-const TAGS_ACCOMMODATION = [
+const ACCOMMODATION_TAGS = [
   "WIFI",
   "BREAKFAST_INCLUDED",
   "PARKING",
@@ -13,26 +13,23 @@ const TAGS_ACCOMMODATION = [
   "PET_FRIENDLY",
 ];
 
-const TAGS_ACTIVITIES = [
-  "OUTDOOR",
-  "INDOOR",
-  "FAMILY_FRIENDLY",
-  "FOOD_AND_DRINK",
-  "MUSEUMS",
-  "NIGHTLIFE",
-  "FREE_OR_LOW_COST",
+const ACTIVITY_TAGS = [
+  "TOURISM",
+  "ENTERTAINMENT",
+  "CATERING",
+  "LEISURE",
+  "NATURAL",
 ];
 
 export default function Lobby() {
+  const navigate = useNavigate();
   const { code } = useParams();
   const [searchParams] = useSearchParams();
 
   const queryUserId = searchParams.get("userId") || "";
   const queryHost = searchParams.get("host") || "";
 
-  const userId = useMemo(() => {
-    return queryUserId || localStorage.getItem("userId") || "";
-  }, [queryUserId]);
+  const userId = useMemo(() => queryUserId || localStorage.getItem("userId") || "", [queryUserId]);
 
   const isHost = useMemo(() => {
     const qp = queryHost === "1";
@@ -43,24 +40,23 @@ export default function Lobby() {
   const [users, setUsers] = useState([]);
   const [session, setSession] = useState(null);
   const [error, setError] = useState("");
+  const [starting, setStarting] = useState(false);
 
   const [budgetMin, setBudgetMin] = useState("");
   const [budgetMax, setBudgetMax] = useState("");
+  const [minRating, setMinRating] = useState("");
   const [selectedTags, setSelectedTags] = useState([]);
-
   const [didInitForm, setDidInitForm] = useState(false);
 
-  const autosaveTimerRef = useRef(null);
-  const lastSavedRef = useRef("");
-
   const tagOptions = useMemo(() => {
-    if (session?.planningType === "ACTIVITIES") return TAGS_ACTIVITIES;
-    return TAGS_ACCOMMODATION;
+    if (session?.planningType === "ACTIVITIES") return ACTIVITY_TAGS;
+    return ACCOMMODATION_TAGS;
   }, [session?.planningType]);
 
   async function loadLobby({ initForm = false } = {}) {
     try {
       setError("");
+
       const res = await fetch(`${API_BASE}/sessions/${code}/lobby`);
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Failed to load lobby");
@@ -73,57 +69,93 @@ export default function Lobby() {
         const f = me?.filters;
 
         if (f) {
-          setBudgetMin(
-            f.budgetMin === null || typeof f.budgetMin === "undefined"
-              ? ""
-              : String(f.budgetMin)
-          );
-          setBudgetMax(
-            f.budgetMax === null || typeof f.budgetMax === "undefined"
-              ? ""
-              : String(f.budgetMax)
-          );
+          setBudgetMin(f.budgetMin === null || typeof f.budgetMin === "undefined" ? "" : String(f.budgetMin));
+          setBudgetMax(f.budgetMax === null || typeof f.budgetMax === "undefined" ? "" : String(f.budgetMax));
+          setMinRating(f.minRating === null || typeof f.minRating === "undefined" ? "" : String(f.minRating));
           setSelectedTags(Array.isArray(f.tags) ? f.tags : []);
         }
 
         setDidInitForm(true);
+      }
+
+      if (data.session?.stage === "SEARCH" || data.session?.isStarted) {
+        navigate(`/search/${code}?userId=${userId}&host=${isHost ? "1" : "0"}`);
       }
     } catch (e) {
       setError(e.message);
     }
   }
 
+  async function saveFilters(next) {
+    if (!userId) return;
+
+    try {
+      const res = await fetch(`${API_BASE}/sessions/${code}/filters`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ userId, filters: next }),
+      });
+
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Failed to save filters");
+    } catch (e) {
+      setError(e.message);
+    }
+  }
+
+  async function startSession() {
+    try {
+      setError("");
+      setStarting(true);
+
+      const res = await fetch(`${API_BASE}/sessions/${code}/start`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ userId }),
+      });
+
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Failed to start session");
+
+      navigate(`/search/${code}?userId=${userId}&host=${isHost ? "1" : "0"}`);
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setStarting(false);
+    }
+  }
+
+  function currentFilterPayload(overrides = {}) {
+    return {
+      budgetMin: budgetMin === "" ? null : Number(budgetMin),
+      budgetMax: budgetMax === "" ? null : Number(budgetMax),
+      minRating: minRating === "" ? null : Number(minRating),
+      tags: selectedTags,
+      ...overrides,
+    };
+  }
+
   function toggleTag(tag) {
     setSelectedTags((prev) => {
-      if (prev.includes(tag)) return prev.filter((t) => t !== tag);
-      return [...prev, tag];
+      const next = prev.includes(tag) ? prev.filter((t) => t !== tag) : [...prev, tag];
+      saveFilters(currentFilterPayload({ tags: next }));
+      return next;
     });
   }
 
-  async function saveFiltersNow(next) {
-    if (!userId) return;
+  function onChangeBudgetMin(v) {
+    setBudgetMin(v);
+    saveFilters(currentFilterPayload({ budgetMin: v === "" ? null : Number(v) }));
+  }
 
-    const payload = JSON.stringify({
-      userId,
-      filters: {
-        budgetMin: next.budgetMin === "" ? null : Number(next.budgetMin),
-        budgetMax: next.budgetMax === "" ? null : Number(next.budgetMax),
-        tags: next.tags,
-      },
-    });
+  function onChangeBudgetMax(v) {
+    setBudgetMax(v);
+    saveFilters(currentFilterPayload({ budgetMax: v === "" ? null : Number(v) }));
+  }
 
-    if (payload === lastSavedRef.current) return;
-
-    const res = await fetch(`${API_BASE}/sessions/${code}/filters`, {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: payload,
-    });
-
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.error || "Failed to auto-save filters");
-
-    lastSavedRef.current = payload;
+  function onChangeMinRating(v) {
+    setMinRating(v);
+    saveFilters(currentFilterPayload({ minRating: v === "" ? null : Number(v) }));
   }
 
   useEffect(() => {
@@ -132,35 +164,17 @@ export default function Lobby() {
     localStorage.setItem("sessionCode", code);
     if (queryUserId) localStorage.setItem("userId", queryUserId);
     if (queryHost) localStorage.setItem("host", queryHost);
+
+    loadLobby({ initForm: true });
+
+    const t = setInterval(() => loadLobby(), 1500);
+    return () => clearInterval(t);
   }, [code]);
 
   useEffect(() => {
-    if (!code) return;
-
-    loadLobby({ initForm: true });
-    const t = setInterval(() => loadLobby({ initForm: false }), 1500);
-
-    return () => clearInterval(t);
-  }, [code, userId]);
-
-  useEffect(() => {
-    if (!didInitForm) return;
     if (!userId) return;
-
-    if (autosaveTimerRef.current) clearTimeout(autosaveTimerRef.current);
-
-    autosaveTimerRef.current = setTimeout(() => {
-      saveFiltersNow({
-        budgetMin,
-        budgetMax,
-        tags: selectedTags,
-      }).catch((e) => setError(e.message));
-    }, 400);
-
-    return () => {
-      if (autosaveTimerRef.current) clearTimeout(autosaveTimerRef.current);
-    };
-  }, [budgetMin, budgetMax, selectedTags, didInitForm, userId]);
+    setDidInitForm(false);
+  }, [userId]);
 
   return (
     <div>
@@ -178,14 +192,19 @@ export default function Lobby() {
           <p>
             Destination: <strong>{session.destination}</strong>
           </p>
+          <p>
+            Planning Type: <strong>{session.planningType}</strong>
+          </p>
         </div>
       ) : null}
 
       {isHost ? (
-        <button type="button" onClick={() => {}}>
-          Start Session
+        <button type="button" onClick={startSession} disabled={starting}>
+          {starting ? "Starting..." : "Start Session"}
         </button>
       ) : null}
+
+      {!isHost ? <p>Waiting for host to start the session...</p> : null}
 
       {error ? <p>{error}</p> : null}
 
@@ -194,32 +213,31 @@ export default function Lobby() {
       <div>
         <div>
           <label>Budget Min</label>
-          <input
-            value={budgetMin}
-            onChange={(e) => setBudgetMin(e.target.value)}
-            placeholder="e.g. 50"
-          />
+          <input value={budgetMin} onChange={(e) => onChangeBudgetMin(e.target.value)} placeholder="e.g. 50" />
         </div>
 
         <div>
           <label>Budget Max</label>
-          <input
-            value={budgetMax}
-            onChange={(e) => setBudgetMax(e.target.value)}
-            placeholder="e.g. 200"
-          />
+          <input value={budgetMax} onChange={(e) => onChangeBudgetMax(e.target.value)} placeholder="e.g. 200" />
         </div>
 
         <div>
-          <label>Tags</label>
+          <label>Minimum Rating</label>
+          <select value={minRating} onChange={(e) => onChangeMinRating(e.target.value)}>
+            <option value="">Any</option>
+            <option value="3">3+</option>
+            <option value="3.5">3.5+</option>
+            <option value="4">4+</option>
+            <option value="4.5">4.5+</option>
+          </select>
+        </div>
+
+        <div>
+          <label>{session?.planningType === "ACTIVITIES" ? "Activity Categories" : "Hotel Amenities"}</label>
           <div>
             {tagOptions.map((tag) => (
               <label key={tag} style={{ display: "block" }}>
-                <input
-                  type="checkbox"
-                  checked={selectedTags.includes(tag)}
-                  onChange={() => toggleTag(tag)}
-                />
+                <input type="checkbox" checked={selectedTags.includes(tag)} onChange={() => toggleTag(tag)} />
                 {tag}
               </label>
             ))}
@@ -227,7 +245,7 @@ export default function Lobby() {
         </div>
       </div>
 
-      <h2>Users</h2>
+      <h2>Users in Lobby</h2>
       {users.length === 0 ? (
         <p>No users yet</p>
       ) : (

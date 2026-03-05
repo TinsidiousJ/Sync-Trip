@@ -26,16 +26,12 @@ export default function JoinSession() {
       const res = await fetch(`${API_BASE}/sessions/join`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          sessionCode: code,
-          displayName: name,
-        }),
+        body: JSON.stringify({ sessionCode: code, displayName: name }),
       });
 
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Failed to join session");
 
-      // store session info locally
       localStorage.setItem("sessionCode", data.sessionCode);
       localStorage.setItem("userId", data.userId);
       localStorage.setItem("host", "0");

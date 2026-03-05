@@ -30,7 +30,6 @@ export default function CreateSession() {
 
         const data = await res.json();
         if (!res.ok) throw new Error(data.error || "Failed to generate session code");
-
         if (!cancelled) setSessionCode(data.sessionCode);
       } catch (e) {
         if (!cancelled) setError(e.message);
@@ -80,8 +79,8 @@ export default function CreateSession() {
       localStorage.setItem("host", "1");
 
       navigate(`/lobby/${data.sessionCode}?userId=${data.userId}&host=1`);
-    } catch (e) {
-      setError(e.message);
+    } catch (e2) {
+      setError(e2.message);
     }
   }
 

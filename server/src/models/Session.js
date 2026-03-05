@@ -2,34 +2,18 @@ import mongoose from "mongoose";
 
 const sessionSchema = new mongoose.Schema(
   {
-    sessionCode: {
-      type: String,
-      required: true,
-      unique: true,
-      index: true,
-    },
+    sessionCode: { type: String, required: true, unique: true, index: true },
 
     stage: {
       type: String,
-      enum: ["DRAFT", "LOBBY"],
+      enum: ["DRAFT", "LOBBY", "SEARCH"],
       default: "DRAFT",
     },
 
-    // Must be optional because /sessions/draft creates a session before host exists
-    hostUserId: {
-      type: String,
-      default: null,
-    },
+    hostUserId: { type: String, default: null },
 
-    sessionName: {
-      type: String,
-      default: "",
-    },
-
-    destination: {
-      type: String,
-      default: "",
-    },
+    sessionName: { type: String, default: "" },
+    destination: { type: String, default: "" },
 
     planningType: {
       type: String,
@@ -37,15 +21,8 @@ const sessionSchema = new mongoose.Schema(
       default: "ACCOMMODATION",
     },
 
-    isStarted: {
-      type: Boolean,
-      default: false,
-    },
-
-    startedAt: {
-      type: Date,
-      default: null,
-    },
+    isStarted: { type: Boolean, default: false },
+    startedAt: { type: Date, default: null },
   },
   { timestamps: true }
 );
