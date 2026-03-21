@@ -7,6 +7,7 @@ import CreateSession from "./pages/CreateSession.jsx";
 import JoinSession from "./pages/JoinSession.jsx";
 import Lobby from "./pages/Lobby.jsx";
 import Search from "./pages/Search.jsx";
+import Voting from "./pages/Voting.jsx";
 
 ReactDOM.createRoot(document.getElementById("root")).render(
   <React.StrictMode>
@@ -17,6 +18,7 @@ ReactDOM.createRoot(document.getElementById("root")).render(
         <Route path="/join" element={<JoinSession />} />
         <Route path="/lobby/:code" element={<Lobby />} />
         <Route path="/search/:code" element={<Search />} />
+        <Route path="/vote/:code" element={<Voting />} />
       </Routes>
     </BrowserRouter>
   </React.StrictMode>

@@ -6,7 +6,7 @@ const sessionSchema = new mongoose.Schema(
 
     stage: {
       type: String,
-      enum: ["DRAFT", "LOBBY", "SEARCH"],
+      enum: ["DRAFT", "LOBBY", "SEARCH", "VOTING", "TIEBREAK", "RESULT"],
       default: "DRAFT",
     },
 
@@ -23,6 +23,12 @@ const sessionSchema = new mongoose.Schema(
 
     isStarted: { type: Boolean, default: false },
     startedAt: { type: Date, default: null },
+
+    currentVoteRound: { type: Number, default: 1 },
+    tieBreakOptionIds: {
+      type: [{ type: mongoose.Schema.Types.ObjectId, ref: "Option" }],
+      default: [],
+    },
   },
   { timestamps: true }
 );
