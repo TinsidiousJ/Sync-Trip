@@ -93,11 +93,6 @@ export default function Voting() {
       if (!res.ok) throw new Error(data.error || "Failed to load voting status");
 
       setStatus(data);
-
-      if (data.stage === "TIEBREAK") {
-        setMessage("A tie was detected. Runoff voting is now active for the tied hotels only.");
-        await loadCandidates();
-      }
     } catch (e) {
       setError(e.message);
     }
@@ -158,10 +153,8 @@ export default function Voting() {
       const data = await readJsonSafely(res, "Failed to submit votes");
       if (!res.ok) throw new Error(data.error || "Failed to submit votes");
 
-      if (data.movedToTieBreak) {
-        setMessage("A tie was found. The session has moved into a runoff round.");
-      } else if (data.tie) {
-        setMessage("The runoff round also ended in a tie.");
+      if (data.itineraryItem) {
+        setMessage("Votes saved. The winning option has been added to the itinerary.");
       } else {
         setMessage("Votes saved.");
       }
@@ -200,7 +193,7 @@ export default function Voting() {
 
   return (
     <div style={{ padding: 24, fontFamily: "sans-serif" }}>
-      <h1>{status?.stage === "TIEBREAK" ? "Runoff Voting" : "Voting"}</h1>
+      <h1>Voting</h1>
 
       {error ? <p>{error}</p> : null}
       {message ? <p>{message}</p> : null}
@@ -237,25 +230,23 @@ export default function Voting() {
             Your required votes: <strong>{status.currentUserVotes}</strong> / <strong>{status.currentUserExpectedVotes}</strong>
           </p>
 
-          {status.stage === "TIEBREAK" ? (
-            <p>The first round ended in a tie, so only the tied hotels are being voted on now.</p>
-          ) : null}
-
           {status.stage === "RESULT" ? (
-            status.tie ? (
+            status.winner ? (
               <div>
                 <p>
-                  <strong>Final Result:</strong> The runoff round also ended in a tie.
-                </p>
-                <p>No single hotel could be chosen automatically.</p>
-              </div>
-            ) : status.winner ? (
-              <div>
-                <p>
-                  <strong>Final Winning Hotel:</strong> {status.winner.title}
+                  <strong>Final Winning Option:</strong> {status.winner.title}
                 </p>
                 {status.winner.subtitle ? <p>{status.winner.subtitle}</p> : null}
-                <p>This is the final selected hotel for this session.</p>
+                <p>This winning option has been saved to the itinerary.</p>
+
+                <button
+                  type="button"
+                  onClick={() =>
+                    navigate(`/itinerary/${code}?userId=${userId}&host=${queryHost || localStorage.getItem("host") || "0"}`)
+                  }
+                >
+                  View Itinerary
+                </button>
               </div>
             ) : null
           ) : (
@@ -266,7 +257,7 @@ export default function Voting() {
 
       {!isResultStage ? (
         <>
-          <h2>{status?.stage === "TIEBREAK" ? "Runoff Candidate Pool" : "Anonymous Candidate Pool"}</h2>
+          <h2>Anonymous Candidate Pool</h2>
 
           {candidates.length === 0 ? (
             <p>Loading candidates...</p>

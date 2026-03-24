@@ -9,6 +9,7 @@ import User from "./models/User.js";
 import Option from "./models/Option.js";
 import Submission from "./models/Submission.js";
 import Vote from "./models/Vote.js";
+import ItineraryItem from "./models/ItineraryItem.js";
 
 dotenv.config();
 
@@ -133,6 +134,27 @@ function serialisePublicOption(option, number = null) {
     image: option.image,
     link: option.link,
     tags: option.tags || [],
+    type: option.type,
+  };
+}
+
+function serialiseItineraryItem(item) {
+  return {
+    itineraryItemId: String(item._id),
+    optionId: String(item.optionId),
+    type: item.type,
+    title: item.title,
+    subtitle: item.subtitle,
+    price: item.price,
+    currency: item.currency,
+    rating: item.rating,
+    image: item.image,
+    link: item.link,
+    tags: item.tags || [],
+    source: item.source,
+    sourceId: item.sourceId,
+    orderIndex: item.orderIndex,
+    createdAt: item.createdAt,
   };
 }
 
@@ -162,6 +184,101 @@ function compareSummaryValues(a, b) {
   return 0;
 }
 
+function compareItineraryItems(a, b) {
+  const typeOrder = { ACCOMMODATION: 0, ACTIVITIES: 1 };
+  const aType = typeOrder[a.type] ?? 99;
+  const bType = typeOrder[b.type] ?? 99;
+
+  if (aType !== bType) return aType - bType;
+  if (a.orderIndex !== b.orderIndex) return a.orderIndex - b.orderIndex;
+
+  return new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime();
+}
+
+async function getNextItineraryOrderIndex(sessionCode) {
+  const last = await ItineraryItem.findOne({ sessionCode }).sort({ orderIndex: -1 }).lean();
+  return last ? last.orderIndex + 1 : 1;
+}
+
+async function saveWinnerToItinerary(sessionCode, option) {
+  const existing = await ItineraryItem.findOne({ sessionCode, optionId: option._id }).lean();
+  if (existing) return existing;
+
+  const orderIndex = await getNextItineraryOrderIndex(sessionCode);
+
+  const created = await ItineraryItem.create({
+    sessionCode,
+    optionId: option._id,
+    type: option.type,
+    title: option.title,
+    subtitle: option.subtitle,
+    price: option.price,
+    currency: option.currency,
+    rating: option.rating,
+    image: option.image,
+    link: option.link,
+    tags: option.tags || [],
+    source: option.source,
+    sourceId: option.sourceId,
+    orderIndex,
+  });
+
+  return created;
+}
+
+function buildItineraryExportText(session, items) {
+  const lines = [];
+
+  lines.push("Sync-Trip Itinerary");
+  lines.push(`Session: ${session.sessionName || ""}`);
+  lines.push(`Destination: ${session.destination || ""}`);
+  lines.push(`Session Code: ${session.sessionCode}`);
+  lines.push("");
+
+  const accommodationItems = items.filter((item) => item.type === "ACCOMMODATION");
+  const activityItems = items.filter((item) => item.type === "ACTIVITIES");
+
+  if (accommodationItems.length > 0) {
+    lines.push("Accommodation");
+    lines.push("-------------");
+
+    for (const item of accommodationItems) {
+      lines.push(`${item.orderIndex}. ${item.title}`);
+      if (item.subtitle) lines.push(`   ${item.subtitle}`);
+      if (item.rating !== null && typeof item.rating !== "undefined") lines.push(`   Rating: ${item.rating}`);
+      if (item.price !== null && typeof item.price !== "undefined") {
+        lines.push(`   Price: ${item.currency || "GBP"} ${item.price}`);
+      }
+      if (item.tags?.length) lines.push(`   Tags: ${item.tags.join(", ")}`);
+      if (item.link) lines.push(`   Link: ${item.link}`);
+      lines.push("");
+    }
+  }
+
+  if (activityItems.length > 0) {
+    lines.push("Activities");
+    lines.push("----------");
+
+    for (const item of activityItems) {
+      lines.push(`${item.orderIndex}. ${item.title}`);
+      if (item.subtitle) lines.push(`   ${item.subtitle}`);
+      if (item.rating !== null && typeof item.rating !== "undefined") lines.push(`   Rating: ${item.rating}`);
+      if (item.price !== null && typeof item.price !== "undefined") {
+        lines.push(`   Price: ${item.currency || "GBP"} ${item.price}`);
+      }
+      if (item.tags?.length) lines.push(`   Tags: ${item.tags.join(", ")}`);
+      if (item.link) lines.push(`   Link: ${item.link}`);
+      lines.push("");
+    }
+  }
+
+  if (items.length === 0) {
+    lines.push("No itinerary items have been saved yet.");
+  }
+
+  return lines.join("\n");
+}
+
 async function getSubmissionOwnership(sessionCode) {
   const submissions = await Submission.find({ sessionCode }).lean();
 
@@ -188,10 +305,6 @@ async function getSubmissionOwnership(sessionCode) {
 }
 
 async function getRoundOptions(session) {
-  if (session.stage === "TIEBREAK" && Array.isArray(session.tieBreakOptionIds) && session.tieBreakOptionIds.length > 0) {
-    return Option.find({ _id: { $in: session.tieBreakOptionIds } }).sort({ createdAt: 1 }).lean();
-  }
-
   return Option.find({ sessionCode: session.sessionCode }).sort({ createdAt: 1 }).lean();
 }
 
@@ -275,23 +388,6 @@ async function getVotingComputation(sessionCode) {
     allVotesComplete,
     ownership,
   };
-}
-
-function getTopTiedOptionIds(sortedSummaries) {
-  if (!sortedSummaries.length) return [];
-
-  const top = sortedSummaries[0];
-  const tied = [String(top.option._id)];
-
-  for (let i = 1; i < sortedSummaries.length; i++) {
-    if (compareSummaryValues(top, sortedSummaries[i]) === 0) {
-      tied.push(String(sortedSummaries[i].option._id));
-    } else {
-      break;
-    }
-  }
-
-  return tied;
 }
 
 async function geoapifyGeocode(destination) {
@@ -895,7 +991,7 @@ app.get("/sessions/:code/voting/candidates", async (req, res) => {
     const session = await Session.findOne({ sessionCode }).lean();
     if (!session) return res.status(404).json({ error: "Session not found" });
 
-    if (!["VOTING", "TIEBREAK", "RESULT"].includes(session.stage)) {
+    if (!["VOTING", "RESULT"].includes(session.stage)) {
       return res.status(403).json({ error: "Voting has not started yet" });
     }
 
@@ -955,7 +1051,7 @@ app.post("/sessions/:code/votes/submit", async (req, res) => {
     const session = await Session.findOne({ sessionCode });
     if (!session) return res.status(404).json({ error: "Session not found" });
 
-    if (!["VOTING", "TIEBREAK", "RESULT"].includes(session.stage)) {
+    if (!["VOTING", "RESULT"].includes(session.stage)) {
       return res.status(403).json({ error: "Voting is not active" });
     }
 
@@ -1047,10 +1143,15 @@ app.post("/sessions/:code/votes/submit", async (req, res) => {
     const sorted = [...computation.summaries].sort(compareSummaryValues);
 
     let winner = null;
-    let movedToTieBreak = false;
+    let savedItineraryItem = null;
 
     if (computation.allVotesComplete) {
       winner = sorted.length > 0 ? serialisePublicOption(sorted[0].option) : null;
+
+      if (sorted.length > 0) {
+        savedItineraryItem = await saveWinnerToItinerary(sessionCode, sorted[0].option);
+      }
+
       session.stage = "RESULT";
       await session.save();
     }
@@ -1059,9 +1160,9 @@ app.post("/sessions/:code/votes/submit", async (req, res) => {
       sessionCode,
       saved: true,
       allVotesComplete: computation.allVotesComplete,
-      movedToTieBreak,
       winner,
       tie: false,
+      itineraryItem: savedItineraryItem ? serialiseItineraryItem(savedItineraryItem) : null,
     });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -1102,6 +1203,51 @@ app.get("/sessions/:code/voting-status", async (req, res) => {
       winner,
       tie: false,
     });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get("/sessions/:code/itinerary", async (req, res) => {
+  try {
+    const sessionCode = req.params.code;
+
+    const session = await Session.findOne({ sessionCode }).lean();
+    if (!session) return res.status(404).json({ error: "Session not found" });
+
+    const items = await ItineraryItem.find({ sessionCode }).lean();
+    const sortedItems = [...items].sort(compareItineraryItems);
+
+    res.json({
+      sessionCode,
+      session: {
+        sessionCode: session.sessionCode,
+        sessionName: session.sessionName,
+        destination: session.destination,
+      },
+      items: sortedItems.map(serialiseItineraryItem),
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get("/sessions/:code/itinerary/export", async (req, res) => {
+  try {
+    const sessionCode = req.params.code;
+
+    const session = await Session.findOne({ sessionCode }).lean();
+    if (!session) return res.status(404).json({ error: "Session not found" });
+
+    const items = await ItineraryItem.find({ sessionCode }).lean();
+    const sortedItems = [...items].sort(compareItineraryItems);
+
+    const text = buildItineraryExportText(session, sortedItems);
+    const safeName = (session.sessionName || sessionCode).replace(/[^a-z0-9-_]+/gi, "_");
+
+    res.setHeader("Content-Type", "text/plain; charset=utf-8");
+    res.setHeader("Content-Disposition", `attachment; filename="${safeName}_itinerary.txt"`);
+    res.send(text);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
