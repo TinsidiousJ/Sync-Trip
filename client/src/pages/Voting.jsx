@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 
 const API_BASE = "http://localhost:4000";
@@ -19,6 +19,9 @@ export default function Voting() {
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
   const [savingVotes, setSavingVotes] = useState(false);
+  const [requestingReplan, setRequestingReplan] = useState(false);
+
+  const hasShownPromptRef = useRef(false);
 
   async function readJsonSafely(res, fallbackMessage) {
     const text = await res.text();
@@ -39,6 +42,11 @@ export default function Voting() {
 
       if (data.session?.stage === "SEARCH") {
         navigate(`/search/${code}?userId=${userId}&host=${queryHost || localStorage.getItem("host") || "0"}`);
+        return;
+      }
+
+      if (data.session?.stage === "LOBBY") {
+        navigate(`/lobby/${code}?userId=${userId}&host=${queryHost || localStorage.getItem("host") || "0"}`);
         return;
       }
 
@@ -93,6 +101,37 @@ export default function Voting() {
       if (!res.ok) throw new Error(data.error || "Failed to load voting status");
 
       setStatus(data);
+    } catch (e) {
+      setError(e.message);
+    }
+  }
+
+  async function respondToReplan(accept) {
+    try {
+      const res = await fetch(`${API_BASE}/sessions/${code}/replan/respond`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ userId, accept }),
+      });
+
+      const data = await readJsonSafely(res, "Failed to respond to replan prompt");
+      if (!res.ok) throw new Error(data.error || "Failed to respond to replan prompt");
+
+      if (!accept) {
+        localStorage.removeItem("sessionCode");
+        localStorage.removeItem("userId");
+        localStorage.removeItem("host");
+        window.alert("You chose not to continue, so you have been removed from the session.");
+        navigate("/");
+        return;
+      }
+
+      if (data.stage === "LOBBY") {
+        navigate(`/lobby/${code}?userId=${userId}&host=${queryHost || localStorage.getItem("host") || "0"}`);
+        return;
+      }
+
+      setMessage("You agreed to continue. Waiting for the remaining users.");
     } catch (e) {
       setError(e.message);
     }
@@ -169,6 +208,35 @@ export default function Voting() {
     }
   }
 
+  async function requestReplan(planningType) {
+    try {
+      setError("");
+      setMessage("");
+      setRequestingReplan(true);
+
+      const res = await fetch(`${API_BASE}/sessions/${code}/replan/request`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ userId, planningType }),
+      });
+
+      const data = await readJsonSafely(res, "Failed to request next planning round");
+      if (!res.ok) throw new Error(data.error || "Failed to request next planning round");
+
+      if (data.stage === "LOBBY") {
+        navigate(`/lobby/${code}?userId=${userId}&host=${queryHost || localStorage.getItem("host") || "1"}`);
+        return;
+      }
+
+      setMessage("Replanning request sent. Waiting for the other users to accept.");
+      await loadSession();
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setRequestingReplan(false);
+    }
+  }
+
   useEffect(() => {
     if (!code) return;
 
@@ -183,13 +251,39 @@ export default function Voting() {
 
   useEffect(() => {
     const timer = setInterval(() => {
+      loadSession();
       loadVotingStatus();
     }, 2000);
 
     return () => clearInterval(timer);
   }, [code, userId]);
 
-  const isResultStage = status?.stage === "RESULT";
+  useEffect(() => {
+    if (!session || session.stage !== "REPLAN_PROMPT") {
+      hasShownPromptRef.current = false;
+      return;
+    }
+
+    const isHost = session.hostUserId === userId;
+    const accepted = session.replanPrompt?.acceptedUserIds || [];
+    const alreadyResponded = accepted.includes(userId);
+
+    if (!isHost && !alreadyResponded && !hasShownPromptRef.current) {
+      hasShownPromptRef.current = true;
+
+      const planningLabel =
+        session.replanPrompt?.planningType === "ACTIVITIES" ? "activities" : "accommodation";
+
+      const wantsToContinue = window.confirm(
+        `The host wants to plan another ${planningLabel}. Press OK to continue in the session. Press Cancel to leave the session.`
+      );
+
+      respondToReplan(wantsToContinue);
+    }
+  }, [session, userId]);
+
+  const isResultStage = status?.stage === "RESULT" || session?.stage === "REPLAN_PROMPT";
+  const isHost = session?.hostUserId === userId;
 
   return (
     <div style={{ padding: 24, fontFamily: "sans-serif" }}>
@@ -230,7 +324,7 @@ export default function Voting() {
             Your required votes: <strong>{status.currentUserVotes}</strong> / <strong>{status.currentUserExpectedVotes}</strong>
           </p>
 
-          {status.stage === "RESULT" ? (
+          {status.stage === "RESULT" || session?.stage === "REPLAN_PROMPT" ? (
             status.winner ? (
               <div>
                 <p>
@@ -239,14 +333,32 @@ export default function Voting() {
                 {status.winner.subtitle ? <p>{status.winner.subtitle}</p> : null}
                 <p>This winning option has been saved to the itinerary.</p>
 
-                <button
-                  type="button"
-                  onClick={() =>
-                    navigate(`/itinerary/${code}?userId=${userId}&host=${queryHost || localStorage.getItem("host") || "0"}`)
-                  }
-                >
-                  View Itinerary
-                </button>
+                <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      navigate(`/itinerary/${code}?userId=${userId}&host=${queryHost || localStorage.getItem("host") || "0"}`)
+                    }
+                  >
+                    View Itinerary
+                  </button>
+
+                  {isHost ? (
+                    <>
+                      <button type="button" onClick={() => requestReplan("ACCOMMODATION")} disabled={requestingReplan}>
+                        {requestingReplan ? "Sending..." : "Plan Another Accommodation"}
+                      </button>
+
+                      <button type="button" onClick={() => requestReplan("ACTIVITIES")} disabled={requestingReplan}>
+                        {requestingReplan ? "Sending..." : "Plan Activities"}
+                      </button>
+                    </>
+                  ) : session?.stage === "REPLAN_PROMPT" ? (
+                    <p style={{ margin: 0 }}>Waiting for all remaining users to respond.</p>
+                  ) : (
+                    <p style={{ margin: 0 }}>Only the host can start the next planning round.</p>
+                  )}
+                </div>
               </div>
             ) : null
           ) : (

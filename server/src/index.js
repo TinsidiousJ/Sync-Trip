@@ -10,6 +10,7 @@ import Option from "./models/Option.js";
 import Submission from "./models/Submission.js";
 import Vote from "./models/Vote.js";
 import ItineraryItem from "./models/ItineraryItem.js";
+import ItineraryChangeRequest from "./models/ItineraryChangeRequest.js";
 
 dotenv.config();
 
@@ -154,7 +155,24 @@ function serialiseItineraryItem(item) {
     source: item.source,
     sourceId: item.sourceId,
     orderIndex: item.orderIndex,
+    scheduledDate: item.scheduledDate || "",
+    scheduledTime: item.scheduledTime || "",
     createdAt: item.createdAt,
+  };
+}
+
+function serialiseChangeRequest(request, totalUsers) {
+  return {
+    requestId: String(request._id),
+    type: request.type,
+    itineraryItemId: String(request.itineraryItemId),
+    requestedByUserId: request.requestedByUserId,
+    approvals: request.approvals || [],
+    approvalCount: (request.approvals || []).length,
+    totalUsers,
+    moveDirection: request.moveDirection || null,
+    status: request.status,
+    createdAt: request.createdAt,
   };
 }
 
@@ -184,7 +202,41 @@ function compareSummaryValues(a, b) {
   return 0;
 }
 
+function getScheduleLevel(item) {
+  const hasDate = Boolean(item.scheduledDate);
+  const hasTime = Boolean(item.scheduledTime);
+
+  if (hasDate && hasTime) return 0;
+  if (hasDate) return 1;
+  return 2;
+}
+
+function getScheduleSortValue(item) {
+  if (item.scheduledDate && item.scheduledTime) {
+    return `${item.scheduledDate}T${item.scheduledTime}`;
+  }
+
+  if (item.scheduledDate) {
+    return `${item.scheduledDate}T23:59`;
+  }
+
+  return "";
+}
+
 function compareItineraryItems(a, b) {
+  const aScheduleLevel = getScheduleLevel(a);
+  const bScheduleLevel = getScheduleLevel(b);
+
+  if (aScheduleLevel !== bScheduleLevel) return aScheduleLevel - bScheduleLevel;
+
+  if (aScheduleLevel !== 2) {
+    const aValue = getScheduleSortValue(a);
+    const bValue = getScheduleSortValue(b);
+
+    if (aValue < bValue) return -1;
+    if (aValue > bValue) return 1;
+  }
+
   const typeOrder = { ACCOMMODATION: 0, ACTIVITIES: 1 };
   const aType = typeOrder[a.type] ?? 99;
   const bType = typeOrder[b.type] ?? 99;
@@ -195,16 +247,27 @@ function compareItineraryItems(a, b) {
   return new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime();
 }
 
-async function getNextItineraryOrderIndex(sessionCode) {
-  const last = await ItineraryItem.findOne({ sessionCode }).sort({ orderIndex: -1 }).lean();
+async function getNextItineraryOrderIndex(sessionCode, type) {
+  const last = await ItineraryItem.findOne({ sessionCode, type }).sort({ orderIndex: -1 }).lean();
   return last ? last.orderIndex + 1 : 1;
+}
+
+async function normaliseTypeOrderIndices(sessionCode, type) {
+  const items = await ItineraryItem.find({ sessionCode, type }).sort({ orderIndex: 1, createdAt: 1 });
+  for (let i = 0; i < items.length; i++) {
+    const desired = i + 1;
+    if (items[i].orderIndex !== desired) {
+      items[i].orderIndex = desired;
+      await items[i].save();
+    }
+  }
 }
 
 async function saveWinnerToItinerary(sessionCode, option) {
   const existing = await ItineraryItem.findOne({ sessionCode, optionId: option._id }).lean();
   if (existing) return existing;
 
-  const orderIndex = await getNextItineraryOrderIndex(sessionCode);
+  const orderIndex = await getNextItineraryOrderIndex(sessionCode, option.type);
 
   const created = await ItineraryItem.create({
     sessionCode,
@@ -221,6 +284,8 @@ async function saveWinnerToItinerary(sessionCode, option) {
     source: option.source,
     sourceId: option.sourceId,
     orderIndex,
+    scheduledDate: "",
+    scheduledTime: "",
   });
 
   return created;
@@ -228,9 +293,9 @@ async function saveWinnerToItinerary(sessionCode, option) {
 
 function buildItineraryExportText(session, items) {
   const lines = [];
+  const itineraryTitle = `Itinerary - ${session.sessionName || session.sessionCode}`;
 
-  lines.push("Sync-Trip Itinerary");
-  lines.push(`Session: ${session.sessionName || ""}`);
+  lines.push(itineraryTitle);
   lines.push(`Destination: ${session.destination || ""}`);
   lines.push(`Session Code: ${session.sessionCode}`);
   lines.push("");
@@ -245,6 +310,11 @@ function buildItineraryExportText(session, items) {
     for (const item of accommodationItems) {
       lines.push(`${item.orderIndex}. ${item.title}`);
       if (item.subtitle) lines.push(`   ${item.subtitle}`);
+      if (item.scheduledDate) {
+        lines.push(
+          `   Scheduled: ${item.scheduledDate}${item.scheduledTime ? ` ${item.scheduledTime}` : ""}`
+        );
+      }
       if (item.rating !== null && typeof item.rating !== "undefined") lines.push(`   Rating: ${item.rating}`);
       if (item.price !== null && typeof item.price !== "undefined") {
         lines.push(`   Price: ${item.currency || "GBP"} ${item.price}`);
@@ -262,6 +332,11 @@ function buildItineraryExportText(session, items) {
     for (const item of activityItems) {
       lines.push(`${item.orderIndex}. ${item.title}`);
       if (item.subtitle) lines.push(`   ${item.subtitle}`);
+      if (item.scheduledDate) {
+        lines.push(
+          `   Scheduled: ${item.scheduledDate}${item.scheduledTime ? ` ${item.scheduledTime}` : ""}`
+        );
+      }
       if (item.rating !== null && typeof item.rating !== "undefined") lines.push(`   Rating: ${item.rating}`);
       if (item.price !== null && typeof item.price !== "undefined") {
         lines.push(`   Price: ${item.currency || "GBP"} ${item.price}`);
@@ -388,6 +463,103 @@ async function getVotingComputation(sessionCode) {
     allVotesComplete,
     ownership,
   };
+}
+
+async function getPendingChangeRequest(sessionCode) {
+  return ItineraryChangeRequest.findOne({ sessionCode, status: "PENDING" }).lean();
+}
+
+async function applyChangeRequest(changeRequest) {
+  const item = await ItineraryItem.findById(changeRequest.itineraryItemId);
+  if (!item) {
+    await ItineraryChangeRequest.findByIdAndUpdate(changeRequest._id, { status: "APPLIED" });
+    return;
+  }
+
+  if (changeRequest.type === "REMOVE") {
+    const itemType = item.type;
+    await ItineraryItem.deleteOne({ _id: item._id });
+    await normaliseTypeOrderIndices(item.sessionCode, itemType);
+  }
+
+  if (changeRequest.type === "MOVE") {
+    if (item.type !== "ACTIVITIES") {
+      await ItineraryChangeRequest.findByIdAndUpdate(changeRequest._id, { status: "APPLIED" });
+      return;
+    }
+
+    if (item.scheduledDate || item.scheduledTime) {
+      await ItineraryChangeRequest.findByIdAndUpdate(changeRequest._id, { status: "APPLIED" });
+      return;
+    }
+
+    const activities = await ItineraryItem.find({
+      sessionCode: item.sessionCode,
+      type: "ACTIVITIES",
+      scheduledDate: "",
+      scheduledTime: "",
+    }).sort({ orderIndex: 1, createdAt: 1 });
+
+    const currentIndex = activities.findIndex((activity) => String(activity._id) === String(item._id));
+
+    if (currentIndex !== -1) {
+      const targetIndex =
+        changeRequest.moveDirection === "UP" ? currentIndex - 1 : currentIndex + 1;
+
+      if (targetIndex >= 0 && targetIndex < activities.length) {
+        const currentItem = activities[currentIndex];
+        const targetItem = activities[targetIndex];
+
+        const temp = currentItem.orderIndex;
+        currentItem.orderIndex = targetItem.orderIndex;
+        targetItem.orderIndex = temp;
+
+        await currentItem.save();
+        await targetItem.save();
+      }
+    }
+
+    await normaliseTypeOrderIndices(item.sessionCode, "ACTIVITIES");
+  }
+
+  await ItineraryChangeRequest.findByIdAndUpdate(changeRequest._id, { status: "APPLIED" });
+}
+
+async function maybeCompleteReplanPrompt(session) {
+  const totalUsers = await User.countDocuments({ sessionCode: session.sessionCode });
+  const accepted = uniqueStrings(session.replanPrompt?.acceptedUserIds || []);
+
+  if (totalUsers > 0 && accepted.length >= totalUsers) {
+    await Vote.deleteMany({ sessionCode: session.sessionCode });
+    await Submission.deleteMany({ sessionCode: session.sessionCode });
+    await Option.deleteMany({ sessionCode: session.sessionCode });
+
+    session.stage = "LOBBY";
+    session.isStarted = false;
+    session.currentVoteRound = 1;
+    session.tieBreakOptionIds = [];
+    session.planningType = session.replanPrompt.planningType || session.planningType;
+    session.replanPrompt = {
+      active: false,
+      requestedByUserId: "",
+      planningType: "",
+      acceptedUserIds: [],
+      declinedUserIds: [],
+    };
+
+    await session.save();
+    return true;
+  }
+
+  return false;
+}
+
+function isValidDateString(value) {
+  return /^\d{4}-\d{2}-\d{2}$/.test(String(value || ""));
+}
+
+function isValidTimeString(value) {
+  return /^([01]\d|2[0-3]):([0-5]\d)$/.test(String(value || ""));
 }
 
 async function geoapifyGeocode(destination) {
@@ -738,6 +910,119 @@ app.post("/sessions/:code/start", async (req, res) => {
   }
 });
 
+app.post("/sessions/:code/replan/request", async (req, res) => {
+  try {
+    const sessionCode = req.params.code;
+    const { userId, planningType } = req.body;
+
+    if (!userId) return res.status(400).json({ error: "Missing userId" });
+    if (!["ACCOMMODATION", "ACTIVITIES"].includes(planningType)) {
+      return res.status(400).json({ error: "Invalid planningType" });
+    }
+
+    const session = await Session.findOne({ sessionCode });
+    if (!session) return res.status(404).json({ error: "Session not found" });
+
+    if (session.hostUserId !== userId) {
+      return res.status(403).json({ error: "Only the host can request a new planning round" });
+    }
+
+    session.stage = "REPLAN_PROMPT";
+    session.replanPrompt = {
+      active: true,
+      requestedByUserId: userId,
+      planningType,
+      acceptedUserIds: [userId],
+      declinedUserIds: [],
+    };
+
+    await session.save();
+    await maybeCompleteReplanPrompt(session);
+
+    const refreshed = await Session.findOne({ sessionCode }).lean();
+
+    res.json({
+      sessionCode,
+      stage: refreshed.stage,
+      replanPrompt: refreshed.replanPrompt,
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post("/sessions/:code/replan/respond", async (req, res) => {
+  try {
+    const sessionCode = req.params.code;
+    const { userId, accept } = req.body;
+
+    if (!userId) return res.status(400).json({ error: "Missing userId" });
+    if (typeof accept !== "boolean") return res.status(400).json({ error: "accept must be true or false" });
+
+    const session = await Session.findOne({ sessionCode });
+    if (!session) return res.status(404).json({ error: "Session not found" });
+
+    const user = await User.findOne({ sessionCode, userId });
+    if (!user) return res.status(404).json({ error: "User not found in this session" });
+
+    if (session.stage !== "REPLAN_PROMPT" || !session.replanPrompt?.active) {
+      return res.status(400).json({ error: "There is no active replan prompt" });
+    }
+
+    if (accept) {
+      session.replanPrompt.acceptedUserIds = uniqueStrings([
+        ...(session.replanPrompt.acceptedUserIds || []),
+        userId,
+      ]);
+      session.replanPrompt.declinedUserIds = (session.replanPrompt.declinedUserIds || []).filter(
+        (id) => id !== userId
+      );
+      await session.save();
+      await maybeCompleteReplanPrompt(session);
+
+      const refreshed = await Session.findOne({ sessionCode }).lean();
+
+      return res.json({
+        sessionCode,
+        accepted: true,
+        removed: false,
+        stage: refreshed.stage,
+        replanPrompt: refreshed.replanPrompt,
+      });
+    }
+
+    session.replanPrompt.declinedUserIds = uniqueStrings([
+      ...(session.replanPrompt.declinedUserIds || []),
+      userId,
+    ]);
+    session.replanPrompt.acceptedUserIds = (session.replanPrompt.acceptedUserIds || []).filter(
+      (id) => id !== userId
+    );
+    await session.save();
+
+    await Vote.deleteMany({ sessionCode, userId });
+    await Submission.deleteMany({ sessionCode, userId });
+    await User.deleteOne({ sessionCode, userId });
+
+    const refreshed = await Session.findOne({ sessionCode });
+    if (refreshed) {
+      await maybeCompleteReplanPrompt(refreshed);
+    }
+
+    const finalSession = await Session.findOne({ sessionCode }).lean();
+
+    return res.json({
+      sessionCode,
+      accepted: false,
+      removed: true,
+      stage: finalSession?.stage || "LOBBY",
+      message: "You declined to continue and were removed from the session.",
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.get("/sessions/:code/lobby", async (req, res) => {
   try {
     const sessionCode = req.params.code;
@@ -758,6 +1043,13 @@ app.get("/sessions/:code/lobby", async (req, res) => {
         planningType: session.planningType,
         isStarted: session.isStarted,
         currentVoteRound: session.currentVoteRound || 1,
+        replanPrompt: session.replanPrompt || {
+          active: false,
+          requestedByUserId: "",
+          planningType: "",
+          acceptedUserIds: [],
+          declinedUserIds: [],
+        },
       },
       users: users.map((u) => ({
         userId: u.userId,
@@ -991,7 +1283,7 @@ app.get("/sessions/:code/voting/candidates", async (req, res) => {
     const session = await Session.findOne({ sessionCode }).lean();
     if (!session) return res.status(404).json({ error: "Session not found" });
 
-    if (!["VOTING", "RESULT"].includes(session.stage)) {
+    if (!["VOTING", "RESULT", "REPLAN_PROMPT"].includes(session.stage)) {
       return res.status(403).json({ error: "Voting has not started yet" });
     }
 
@@ -1180,7 +1472,7 @@ app.get("/sessions/:code/voting-status", async (req, res) => {
 
     let winner = null;
 
-    if (computation.session.stage === "RESULT") {
+    if (computation.session.stage === "RESULT" || computation.session.stage === "REPLAN_PROMPT") {
       const sorted = [...computation.summaries].sort(compareSummaryValues);
       if (sorted.length > 0) {
         winner = serialisePublicOption(sorted[0].option);
@@ -1218,14 +1510,20 @@ app.get("/sessions/:code/itinerary", async (req, res) => {
     const items = await ItineraryItem.find({ sessionCode }).lean();
     const sortedItems = [...items].sort(compareItineraryItems);
 
+    const pendingRequest = await getPendingChangeRequest(sessionCode);
+    const totalUsers = await User.countDocuments({ sessionCode });
+
     res.json({
       sessionCode,
+      title: `Itinerary - ${session.sessionName || session.sessionCode}`,
       session: {
         sessionCode: session.sessionCode,
         sessionName: session.sessionName,
         destination: session.destination,
+        hostUserId: session.hostUserId,
       },
       items: sortedItems.map(serialiseItineraryItem),
+      pendingRequest: pendingRequest ? serialiseChangeRequest(pendingRequest, totalUsers) : null,
     });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -1243,11 +1541,213 @@ app.get("/sessions/:code/itinerary/export", async (req, res) => {
     const sortedItems = [...items].sort(compareItineraryItems);
 
     const text = buildItineraryExportText(session, sortedItems);
-    const safeName = (session.sessionName || sessionCode).replace(/[^a-z0-9-_]+/gi, "_");
+    const safeName = `itinerary_${(session.sessionName || sessionCode).replace(/[^a-z0-9-_]+/gi, "_")}`;
 
     res.setHeader("Content-Type", "text/plain; charset=utf-8");
-    res.setHeader("Content-Disposition", `attachment; filename="${safeName}_itinerary.txt"`);
+    res.setHeader("Content-Disposition", `attachment; filename="${safeName}.txt"`);
     res.send(text);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.put("/sessions/:code/itinerary/items/:itemId/schedule", async (req, res) => {
+  try {
+    const sessionCode = req.params.code;
+    const itemId = req.params.itemId;
+    const { userId, scheduledDate, scheduledTime } = req.body;
+
+    if (!userId) return res.status(400).json({ error: "Missing userId" });
+
+    const session = await Session.findOne({ sessionCode }).lean();
+    if (!session) return res.status(404).json({ error: "Session not found" });
+
+    const user = await User.findOne({ sessionCode, userId }).lean();
+    if (!user) return res.status(404).json({ error: "User not found in this session" });
+
+    const item = await ItineraryItem.findOne({ _id: itemId, sessionCode });
+    if (!item) return res.status(404).json({ error: "Itinerary item not found" });
+
+    const nextDate = String(scheduledDate || "").trim();
+    const nextTime = String(scheduledTime || "").trim();
+
+    if (nextTime && !nextDate) {
+      return res.status(400).json({ error: "A time cannot be saved without a date" });
+    }
+
+    if (nextDate && !isValidDateString(nextDate)) {
+      return res.status(400).json({ error: "Date must be in YYYY-MM-DD format" });
+    }
+
+    if (nextTime && !isValidTimeString(nextTime)) {
+      return res.status(400).json({ error: "Time must be in HH:MM 24-hour format" });
+    }
+
+    item.scheduledDate = nextDate;
+    item.scheduledTime = nextTime;
+    await item.save();
+
+    res.json({
+      sessionCode,
+      item: serialiseItineraryItem(item),
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post("/sessions/:code/itinerary/request-remove", async (req, res) => {
+  try {
+    const sessionCode = req.params.code;
+    const { userId, itineraryItemId } = req.body;
+
+    if (!userId) return res.status(400).json({ error: "Missing userId" });
+    if (!itineraryItemId) return res.status(400).json({ error: "Missing itineraryItemId" });
+
+    const session = await Session.findOne({ sessionCode }).lean();
+    if (!session) return res.status(404).json({ error: "Session not found" });
+
+    const user = await User.findOne({ sessionCode, userId }).lean();
+    if (!user) return res.status(404).json({ error: "User not found in this session" });
+
+    const item = await ItineraryItem.findOne({ _id: itineraryItemId, sessionCode }).lean();
+    if (!item) return res.status(404).json({ error: "Itinerary item not found" });
+
+    const existingPending = await getPendingChangeRequest(sessionCode);
+    if (existingPending) {
+      return res.status(409).json({ error: "There is already a pending itinerary change request" });
+    }
+
+    const request = await ItineraryChangeRequest.create({
+      sessionCode,
+      type: "REMOVE",
+      itineraryItemId,
+      requestedByUserId: userId,
+      approvals: [userId],
+      status: "PENDING",
+    });
+
+    const totalUsers = await User.countDocuments({ sessionCode });
+
+    if (totalUsers === 1) {
+      await applyChangeRequest(request);
+    }
+
+    const refreshed = await ItineraryChangeRequest.findById(request._id).lean();
+
+    res.json({
+      sessionCode,
+      request: serialiseChangeRequest(refreshed, totalUsers),
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post("/sessions/:code/itinerary/request-move", async (req, res) => {
+  try {
+    const sessionCode = req.params.code;
+    const { userId, itineraryItemId, direction } = req.body;
+
+    if (!userId) return res.status(400).json({ error: "Missing userId" });
+    if (!itineraryItemId) return res.status(400).json({ error: "Missing itineraryItemId" });
+    if (!["UP", "DOWN"].includes(direction)) {
+      return res.status(400).json({ error: "direction must be UP or DOWN" });
+    }
+
+    const session = await Session.findOne({ sessionCode }).lean();
+    if (!session) return res.status(404).json({ error: "Session not found" });
+
+    const user = await User.findOne({ sessionCode, userId }).lean();
+    if (!user) return res.status(404).json({ error: "User not found in this session" });
+
+    const item = await ItineraryItem.findOne({ _id: itineraryItemId, sessionCode }).lean();
+    if (!item) return res.status(404).json({ error: "Itinerary item not found" });
+    if (item.type !== "ACTIVITIES") {
+      return res.status(400).json({ error: "Only activity items can be reordered" });
+    }
+
+    if (item.scheduledDate || item.scheduledTime) {
+      return res.status(400).json({
+        error: "Scheduled activities are auto-sorted chronologically and cannot be manually moved",
+      });
+    }
+
+    const existingPending = await getPendingChangeRequest(sessionCode);
+    if (existingPending) {
+      return res.status(409).json({ error: "There is already a pending itinerary change request" });
+    }
+
+    const request = await ItineraryChangeRequest.create({
+      sessionCode,
+      type: "MOVE",
+      itineraryItemId,
+      requestedByUserId: userId,
+      approvals: [userId],
+      moveDirection: direction,
+      status: "PENDING",
+    });
+
+    const totalUsers = await User.countDocuments({ sessionCode });
+
+    if (totalUsers === 1) {
+      await applyChangeRequest(request);
+    }
+
+    const refreshed = await ItineraryChangeRequest.findById(request._id).lean();
+
+    res.json({
+      sessionCode,
+      request: serialiseChangeRequest(refreshed, totalUsers),
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post("/sessions/:code/itinerary/requests/:requestId/approve", async (req, res) => {
+  try {
+    const sessionCode = req.params.code;
+    const requestId = req.params.requestId;
+    const { userId } = req.body;
+
+    if (!userId) return res.status(400).json({ error: "Missing userId" });
+
+    const session = await Session.findOne({ sessionCode }).lean();
+    if (!session) return res.status(404).json({ error: "Session not found" });
+
+    const user = await User.findOne({ sessionCode, userId }).lean();
+    if (!user) return res.status(404).json({ error: "User not found in this session" });
+
+    const request = await ItineraryChangeRequest.findOne({
+      _id: requestId,
+      sessionCode,
+      status: "PENDING",
+    });
+
+    if (!request) {
+      return res.status(404).json({ error: "Pending change request not found" });
+    }
+
+    if (!request.approvals.includes(userId)) {
+      request.approvals.push(userId);
+      request.approvals = uniqueStrings(request.approvals);
+      await request.save();
+    }
+
+    const totalUsers = await User.countDocuments({ sessionCode });
+
+    if (request.approvals.length >= totalUsers) {
+      await applyChangeRequest(request);
+    }
+
+    const refreshed = await ItineraryChangeRequest.findById(request._id).lean();
+
+    res.json({
+      sessionCode,
+      request: serialiseChangeRequest(refreshed, totalUsers),
+      applied: refreshed.status === "APPLIED",
+    });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

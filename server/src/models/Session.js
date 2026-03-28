@@ -6,7 +6,7 @@ const sessionSchema = new mongoose.Schema(
 
     stage: {
       type: String,
-      enum: ["DRAFT", "LOBBY", "SEARCH", "VOTING", "TIEBREAK", "RESULT"],
+      enum: ["DRAFT", "LOBBY", "SEARCH", "VOTING", "TIEBREAK", "RESULT", "REPLAN_PROMPT"],
       default: "DRAFT",
     },
 
@@ -28,6 +28,18 @@ const sessionSchema = new mongoose.Schema(
     tieBreakOptionIds: {
       type: [{ type: mongoose.Schema.Types.ObjectId, ref: "Option" }],
       default: [],
+    },
+
+    replanPrompt: {
+      active: { type: Boolean, default: false },
+      requestedByUserId: { type: String, default: "" },
+      planningType: {
+        type: String,
+        enum: ["", "ACCOMMODATION", "ACTIVITIES"],
+        default: "",
+      },
+      acceptedUserIds: { type: [String], default: [] },
+      declinedUserIds: { type: [String], default: [] },
     },
   },
   { timestamps: true }

@@ -3,7 +3,6 @@ import mongoose from "mongoose";
 const itineraryItemSchema = new mongoose.Schema(
   {
     sessionCode: { type: String, required: true, index: true },
-
     optionId: { type: mongoose.Schema.Types.ObjectId, ref: "Option", required: true },
 
     type: {
@@ -28,6 +27,9 @@ const itineraryItemSchema = new mongoose.Schema(
     sourceId: { type: String, default: "" },
 
     orderIndex: { type: Number, required: true },
+
+    scheduledDate: { type: String, default: "" }, // YYYY-MM-DD
+    scheduledTime: { type: String, default: "" }, // HH:MM
   },
   { timestamps: true }
 );
