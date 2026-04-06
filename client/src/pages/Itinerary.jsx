@@ -1,5 +1,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
+import PageLayout from "../components/PageLayout.jsx";
+import ConfirmPopup from "../components/ConfirmPopup.jsx";
 
 const API_BASE = "http://localhost:4000";
 
@@ -24,6 +26,9 @@ export default function Itinerary() {
   const [editingItemId, setEditingItemId] = useState("");
   const [editDate, setEditDate] = useState("");
   const [editTime, setEditTime] = useState("");
+
+  const [itemWaitingForRemovePrompt, setItemWaitingForRemovePrompt] = useState("");
+  const [movePromptInfo, setMovePromptInfo] = useState({ itemId: "", direction: "" });
 
   async function readJsonSafely(res, fallbackMessage) {
     const text = await res.text();
@@ -61,10 +66,32 @@ export default function Itinerary() {
     return `${item.currency || "GBP"} ${item.price}`;
   }
 
+  function formatDateUk(dateValue) {
+    if (!dateValue) return "";
+    const parts = String(dateValue).split("-");
+    if (parts.length !== 3) return dateValue;
+    return `${parts[2]}/${parts[1]}/${parts[0]}`;
+  }
+
+  function formatTimeUk(timeValue) {
+    if (!timeValue) return "";
+    const [hour, minute] = String(timeValue).split(":");
+    if (!hour || !minute) return timeValue;
+
+    const date = new Date();
+    date.setHours(Number(hour), Number(minute), 0, 0);
+
+    return date.toLocaleTimeString("en-GB", {
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: false,
+    });
+  }
+
   function renderSchedule(item) {
     if (!item.scheduledDate) return "Unscheduled";
-    if (item.scheduledTime) return `${item.scheduledDate} at ${item.scheduledTime}`;
-    return `${item.scheduledDate}`;
+    if (item.scheduledTime) return `${formatDateUk(item.scheduledDate)} at ${formatTimeUk(item.scheduledTime)}`;
+    return formatDateUk(item.scheduledDate);
   }
 
   function exportItinerary() {
@@ -164,6 +191,7 @@ export default function Itinerary() {
       setError(e.message);
     } finally {
       setActing(false);
+      setItemWaitingForRemovePrompt("");
     }
   }
 
@@ -188,6 +216,7 @@ export default function Itinerary() {
       setError(e.message);
     } finally {
       setActing(false);
+      setMovePromptInfo({ itemId: "", direction: "" });
     }
   }
 
@@ -234,183 +263,201 @@ export default function Itinerary() {
   const currentUserHasApproved = pendingRequest?.approvals?.includes(userId);
 
   return (
-    <div style={{ padding: 24, fontFamily: "sans-serif" }}>
-      <h1>{title}</h1>
-
-      {error ? <p>{error}</p> : null}
-      {message ? <p>{message}</p> : null}
-      {loading ? <p>Loading itinerary...</p> : null}
+    <PageLayout
+      pageTitle={title}
+      pageSubtitle="Review the final selections, add dates or times, and collaboratively refine the itinerary."
+      headerAction={
+        <div className="button-row">
+          <button type="button" className="button button--secondary" onClick={loadItinerary}>
+            Refresh
+          </button>
+          <button type="button" className="button button--primary" onClick={exportItinerary}>
+            Export Itinerary
+          </button>
+        </div>
+      }
+    >
+      {error ? <div className="alert alert--error" style={{ marginBottom: 20 }}>{error}</div> : null}
+      {message ? <div className="alert alert--warning" style={{ marginBottom: 20 }}>{message}</div> : null}
+      {loading ? <div className="alert">Loading itinerary...</div> : null}
 
       {session ? (
-        <div style={{ marginBottom: 20 }}>
-          <p>
-            Session Code: <strong>{code}</strong>
-          </p>
-          <p>
-            Session: <strong>{session.sessionName}</strong>
-          </p>
-          <p>
-            Destination: <strong>{session.destination}</strong>
-          </p>
+        <div className="card" style={{ marginBottom: 20 }}>
+          <div className="info-list">
+            <div className="info-row">
+              <span className="info-row__label">Session code</span>
+              <strong>{code}</strong>
+            </div>
+            <div className="info-row">
+              <span className="info-row__label">Session</span>
+              <strong>{session.sessionName}</strong>
+            </div>
+            <div className="info-row">
+              <span className="info-row__label">Destination</span>
+              <strong>{session.destination}</strong>
+            </div>
+          </div>
+
+          <div className="button-row" style={{ marginTop: 16 }}>
+            <button
+              type="button"
+              className="button button--secondary"
+              onClick={() =>
+                navigate(`/vote/${code}?userId=${userId}&host=${queryHost || localStorage.getItem("host") || "0"}`)
+              }
+            >
+              Back to Voting / Result
+            </button>
+          </div>
         </div>
       ) : null}
 
-      <div
-        style={{
-          border: "1px solid #ccc",
-          padding: 16,
-          borderRadius: 8,
-          marginBottom: 20,
-        }}
-      >
-        <p style={{ marginTop: 0 }}>
-          Scheduled items are automatically sorted chronologically.
-        </p>
-        <p style={{ marginBottom: 0 }}>
-          Activities with a saved date or time cannot be manually moved. Clear or change the schedule first if you want to reposition them manually.
-        </p>
-      </div>
-
-      <div style={{ marginBottom: 20, display: "flex", gap: 12, flexWrap: "wrap" }}>
-        <button type="button" onClick={loadItinerary}>
-          Refresh Itinerary
-        </button>
-
-        <button type="button" onClick={exportItinerary}>
-          Export Itinerary
-        </button>
-
-        <button
-          type="button"
-          onClick={() =>
-            navigate(`/vote/${code}?userId=${userId}&host=${queryHost || localStorage.getItem("host") || "0"}`)
-          }
-        >
-          Back to Voting / Result
-        </button>
+      <div className="alert alert--warning" style={{ marginBottom: 20 }}>
+        Scheduled items are automatically sorted chronologically. Scheduled activities cannot be manually moved until the schedule is cleared or changed.
       </div>
 
       {pendingRequest ? (
-        <div style={{ border: "1px solid #ccc", padding: 16, borderRadius: 8, marginBottom: 20 }}>
-          <h2 style={{ marginTop: 0 }}>Pending Change Request</h2>
-          <p>
-            <strong>Type:</strong> {pendingRequest.type}
-          </p>
-          {pendingRequest.moveDirection ? (
-            <p>
-              <strong>Direction:</strong> {pendingRequest.moveDirection}
-            </p>
-          ) : null}
-          <p>
-            <strong>Approvals:</strong> {pendingRequest.approvalCount} / {pendingRequest.totalUsers}
-          </p>
+        <div className="card" style={{ marginBottom: 20 }}>
+          <h2 className="card__title">Pending group change</h2>
+
+          <div className="info-list">
+            <div className="info-row">
+              <span className="info-row__label">Type</span>
+              <strong>{pendingRequest.type}</strong>
+            </div>
+
+            {pendingRequest.moveDirection ? (
+              <div className="info-row">
+                <span className="info-row__label">Direction</span>
+                <strong>{pendingRequest.moveDirection}</strong>
+              </div>
+            ) : null}
+
+            <div className="info-row">
+              <span className="info-row__label">Approvals</span>
+              <strong>
+                {pendingRequest.approvalCount} / {pendingRequest.totalUsers}
+              </strong>
+            </div>
+          </div>
 
           {!currentUserHasApproved ? (
-            <button type="button" onClick={approveRequest} disabled={acting}>
-              {acting ? "Submitting..." : "Approve Request"}
-            </button>
+            <div className="button-row" style={{ marginTop: 16 }}>
+              <button type="button" className="button button--primary" onClick={approveRequest} disabled={acting}>
+                {acting ? "Submitting..." : "Approve Request"}
+              </button>
+            </div>
           ) : (
-            <p>You have already approved this request.</p>
+            <p className="inline-note" style={{ marginTop: 16 }}>
+              You have already approved this request.
+            </p>
           )}
         </div>
       ) : null}
 
       {items.length === 0 && !loading ? (
-        <p>No itinerary items have been saved yet.</p>
+        <div className="empty-state">No itinerary items have been saved yet.</div>
       ) : (
-        <div>
+        <div className="option-grid">
           {items.map((item) => {
-            const isEditing = editingItemId === item.itineraryItemId;
+            const isEditingSchedule = editingItemId === item.itineraryItemId;
             const isScheduled = Boolean(item.scheduledDate || item.scheduledTime);
 
             return (
-              <div
-                key={item.itineraryItemId}
-                style={{
-                  border: "1px solid #ccc",
-                  padding: 16,
-                  marginBottom: 16,
-                  borderRadius: 8,
-                }}
-              >
-                <p style={{ margin: "0 0 8px 0" }}>
-                  <strong>
+              <div key={item.itineraryItemId} className="option-card">
+                {item.image ? (
+                  <img src={item.image} alt={item.title} className="option-card__image" />
+                ) : (
+                  <div className="option-card__image option-card__image--placeholder">No image available</div>
+                )}
+
+                <div>
+                  <div className="badge-row" style={{ marginBottom: 8 }}>
+                    <span className="badge badge--primary">
+                      {item.type === "ACCOMMODATION" ? "Accommodation" : "Activity"}
+                    </span>
+                    <span className={`badge ${isScheduled ? "badge--success" : ""}`}>
+                      {renderSchedule(item)}
+                    </span>
+                  </div>
+
+                  <h3 className="option-card__title">
                     {item.orderIndex}. {item.title}
-                  </strong>
-                </p>
+                  </h3>
 
-                <p style={{ margin: "0 0 8px 0" }}>
-                  <strong>Type:</strong> {item.type}
-                </p>
+                  {item.subtitle ? <p className="option-card__subtitle">{item.subtitle}</p> : null}
+                </div>
 
-                {item.subtitle ? <p style={{ margin: "0 0 8px 0" }}>{item.subtitle}</p> : null}
-
-                <p style={{ margin: "0 0 8px 0" }}>
-                  <strong>Schedule:</strong> {renderSchedule(item)}
-                </p>
-
-                <p style={{ margin: "0 0 8px 0" }}>
-                  <strong>Rating:</strong>{" "}
-                  {item.rating !== null && typeof item.rating !== "undefined" ? item.rating : "Unavailable"}
-                </p>
-
-                <p style={{ margin: "0 0 8px 0" }}>
-                  <strong>Price:</strong> {renderPrice(item)}
-                </p>
+                <div className="option-card__meta">
+                  <span className="badge">Rating: {item.rating ?? "Unavailable"}</span>
+                  <span className="badge">Price: {renderPrice(item)}</span>
+                </div>
 
                 {item.tags?.length ? (
-                  <p style={{ margin: "0 0 8px 0" }}>
-                    <strong>Tags:</strong> {item.tags.join(", ")}
-                  </p>
+                  <div className="badge-row">
+                    {item.tags.map((tag) => (
+                      <span key={tag} className="badge">
+                        {tag}
+                      </span>
+                    ))}
+                  </div>
                 ) : null}
 
                 {item.link ? (
-                  <p style={{ margin: "0 0 12px 0" }}>
-                    <a href={item.link} target="_blank" rel="noreferrer">
-                      View source
-                    </a>
-                  </p>
+                  <a href={item.link} target="_blank" rel="noreferrer" className="inline-note">
+                    View source
+                  </a>
                 ) : null}
 
-                {isEditing ? (
-                  <div
-                    style={{
-                      border: "1px solid #ddd",
-                      padding: 12,
-                      borderRadius: 8,
-                      marginBottom: 12,
-                    }}
-                  >
-                    <div style={{ marginBottom: 12 }}>
-                      <label>Date</label>
-                      <br />
-                      <input
-                        type="date"
-                        value={editDate}
-                        onChange={(e) => setEditDate(e.target.value)}
-                      />
+                {isEditingSchedule ? (
+                  <div className="card card--muted">
+                    <div className="form-grid form-grid--2">
+                      <div className="field">
+                        <label className="field__label">Date</label>
+                        <input
+                          type="date"
+                          className="input"
+                          value={editDate}
+                          onChange={(e) => setEditDate(e.target.value)}
+                        />
+                      </div>
+
+                      <div className="field">
+                        <label className="field__label">Time</label>
+                        <input
+                          type="time"
+                          className="input"
+                          value={editTime}
+                          onChange={(e) => setEditTime(e.target.value)}
+                        />
+                      </div>
                     </div>
 
-                    <div style={{ marginBottom: 12 }}>
-                      <label>Time</label>
-                      <br />
-                      <input
-                        type="time"
-                        value={editTime}
-                        onChange={(e) => setEditTime(e.target.value)}
-                      />
-                    </div>
-
-                    <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                      <button type="button" onClick={() => saveSchedule(item.itineraryItemId)} disabled={acting}>
-                        {acting ? "Saving..." : "Save Date/Time"}
+                    <div className="button-row" style={{ marginTop: 12 }}>
+                      <button
+                        type="button"
+                        className="button button--primary"
+                        onClick={() => saveSchedule(item.itineraryItemId)}
+                        disabled={acting}
+                      >
+                        {acting ? "Saving..." : "Save Date / Time"}
                       </button>
 
-                      <button type="button" onClick={() => clearSchedule(item.itineraryItemId)} disabled={acting}>
+                      <button
+                        type="button"
+                        className="button button--secondary"
+                        onClick={() => clearSchedule(item.itineraryItemId)}
+                        disabled={acting}
+                      >
                         Clear Schedule
                       </button>
 
-                      <button type="button" onClick={cancelEditSchedule} disabled={acting}>
+                      <button
+                        type="button"
+                        className="button button--secondary"
+                        onClick={cancelEditSchedule}
+                        disabled={acting}
+                      >
                         Cancel
                       </button>
                     </div>
@@ -418,12 +465,22 @@ export default function Itinerary() {
                 ) : null}
 
                 {!pendingRequest ? (
-                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                    <button type="button" onClick={() => beginEditSchedule(item)} disabled={acting}>
-                      {isScheduled ? "Edit Date/Time" : "Add Date/Time"}
+                  <div className="button-row">
+                    <button
+                      type="button"
+                      className="button button--secondary"
+                      onClick={() => beginEditSchedule(item)}
+                      disabled={acting}
+                    >
+                      {isScheduled ? "Edit Date / Time" : "Add Date / Time"}
                     </button>
 
-                    <button type="button" onClick={() => requestRemove(item.itineraryItemId)} disabled={acting}>
+                    <button
+                      type="button"
+                      className="button button--secondary"
+                      onClick={() => setItemWaitingForRemovePrompt(item.itineraryItemId)}
+                      disabled={acting}
+                    >
                       Request Remove
                     </button>
 
@@ -431,14 +488,21 @@ export default function Itinerary() {
                       <>
                         <button
                           type="button"
-                          onClick={() => requestMove(item.itineraryItemId, "UP")}
+                          className="button button--secondary"
+                          onClick={() =>
+                            setMovePromptInfo({ itemId: item.itineraryItemId, direction: "UP" })
+                          }
                           disabled={acting || isScheduled}
                         >
                           Move Up
                         </button>
+
                         <button
                           type="button"
-                          onClick={() => requestMove(item.itineraryItemId, "DOWN")}
+                          className="button button--secondary"
+                          onClick={() =>
+                            setMovePromptInfo({ itemId: item.itineraryItemId, direction: "DOWN" })
+                          }
                           disabled={acting || isScheduled}
                         >
                           Move Down
@@ -447,21 +511,39 @@ export default function Itinerary() {
                     ) : null}
                   </div>
                 ) : (
-                  <p>A pending request must be resolved before another change can be made.</p>
-                )}
-
-                {item.type === "ACTIVITIES" && isScheduled ? (
-                  <p style={{ marginTop: 12, marginBottom: 0 }}>
-                    This activity is scheduled, so it is auto-sorted chronologically.
+                  <p className="inline-note">
+                    A pending request must be resolved before another change can be made.
                   </p>
-                ) : null}
+                )}
               </div>
             );
           })}
         </div>
       )}
 
-      <p style={{ marginTop: 24 }}>Current user ID: {userId || "Not set"}</p>
-    </div>
+      <ConfirmPopup
+        isOpen={Boolean(itemWaitingForRemovePrompt)}
+        title="Request removal?"
+        message="This will create a group approval request to remove the selected itinerary item."
+        confirmText="Create Request"
+        cancelText="Cancel"
+        onConfirm={() => requestRemove(itemWaitingForRemovePrompt)}
+        onCancel={() => setItemWaitingForRemovePrompt("")}
+        loading={acting}
+      />
+
+      <ConfirmPopup
+        isOpen={Boolean(movePromptInfo.itemId)}
+        title="Request reorder?"
+        message={`This will create a group approval request to move the selected activity ${
+          movePromptInfo.direction === "UP" ? "up" : "down"
+        } in the itinerary.`}
+        confirmText="Create Request"
+        cancelText="Cancel"
+        onConfirm={() => requestMove(movePromptInfo.itemId, movePromptInfo.direction)}
+        onCancel={() => setMovePromptInfo({ itemId: "", direction: "" })}
+        loading={acting}
+      />
+    </PageLayout>
   );
 }

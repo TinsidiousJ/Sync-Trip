@@ -1,5 +1,8 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
+import PageLayout from "../components/PageLayout.jsx";
+import ConfirmPopup from "../components/ConfirmPopup.jsx";
+import BottomBar from "../components/BottomBar.jsx";
 
 const API_BASE = "http://localhost:4000";
 
@@ -34,17 +37,19 @@ export default function Search() {
   const [users, setUsers] = useState([]);
   const [results, setResults] = useState([]);
   const [error, setError] = useState("");
+  const [message, setMessage] = useState("");
 
   const [loadingSession, setLoadingSession] = useState(true);
   const [loadingResults, setLoadingResults] = useState(false);
   const [submittingChoice, setSubmittingChoice] = useState(false);
-  const [showFilters, setShowFilters] = useState(false);
+  const [showFilters, setShowFilters] = useState(true);
+  const [showSubmitPrompt, setShowSubmitPrompt] = useState(false);
 
   const [budgetMin, setBudgetMin] = useState("");
   const [budgetMax, setBudgetMax] = useState("");
   const [minRating, setMinRating] = useState("");
   const [selectedTags, setSelectedTags] = useState([]);
-  const [didInitForm, setDidInitForm] = useState(false);
+  const [didLoadMyFilters, setDidLoadMyFilters] = useState(false);
 
   const [selectedChoice, setSelectedChoice] = useState(null);
   const [submissionStatus, setSubmissionStatus] = useState({
@@ -70,7 +75,7 @@ export default function Search() {
     }
   }
 
-  async function loadSession({ initForm = false } = {}) {
+  async function loadSession({ initialiseMyFilters = false } = {}) {
     try {
       setError("");
       setLoadingSession(true);
@@ -80,7 +85,11 @@ export default function Search() {
 
       if (!res.ok) throw new Error(data.error || "Failed to load session");
 
-      if (data.session?.stage === "VOTING" || data.session?.stage === "RESULT") {
+      if (
+        data.session?.stage === "VOTING" ||
+        data.session?.stage === "RESULT" ||
+        data.session?.stage === "REPLAN_PROMPT"
+      ) {
         navigate(`/vote/${code}?userId=${userId}&host=${queryHost || localStorage.getItem("host") || "0"}`);
         return;
       }
@@ -93,18 +102,30 @@ export default function Search() {
       setSession(data.session || null);
       setUsers(data.users || []);
 
-      if ((initForm || !didInitForm) && userId) {
-        const me = (data.users || []).find((u) => u.userId === userId);
-        const f = me?.filters;
+      if ((initialiseMyFilters || !didLoadMyFilters) && userId) {
+        const me = (data.users || []).find((user) => user.userId === userId);
+        const myFilters = me?.filters;
 
-        if (f) {
-          setBudgetMin(f.budgetMin === null || typeof f.budgetMin === "undefined" ? "" : String(f.budgetMin));
-          setBudgetMax(f.budgetMax === null || typeof f.budgetMax === "undefined" ? "" : String(f.budgetMax));
-          setMinRating(f.minRating === null || typeof f.minRating === "undefined" ? "" : String(f.minRating));
-          setSelectedTags(Array.isArray(f.tags) ? f.tags : []);
+        if (myFilters) {
+          setBudgetMin(
+            myFilters.budgetMin === null || typeof myFilters.budgetMin === "undefined"
+              ? ""
+              : String(myFilters.budgetMin)
+          );
+          setBudgetMax(
+            myFilters.budgetMax === null || typeof myFilters.budgetMax === "undefined"
+              ? ""
+              : String(myFilters.budgetMax)
+          );
+          setMinRating(
+            myFilters.minRating === null || typeof myFilters.minRating === "undefined"
+              ? ""
+              : String(myFilters.minRating)
+          );
+          setSelectedTags(Array.isArray(myFilters.tags) ? myFilters.tags : []);
         }
 
-        setDidInitForm(true);
+        setDidLoadMyFilters(true);
       }
     } catch (e) {
       setError(e.message);
@@ -113,7 +134,7 @@ export default function Search() {
     }
   }
 
-  function currentFilterPayload(overrides = {}) {
+  function buildCurrentFilters(overrides = {}) {
     return {
       budgetMin: budgetMin === "" ? null : Number(budgetMin),
       budgetMax: budgetMax === "" ? null : Number(budgetMax),
@@ -123,13 +144,13 @@ export default function Search() {
     };
   }
 
-  async function saveFilters(next) {
+  async function saveFilters(nextFilters) {
     if (!userId) return;
 
     const res = await fetch(`${API_BASE}/sessions/${code}/filters`, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ userId, filters: next }),
+      body: JSON.stringify({ userId, filters: nextFilters }),
     });
 
     const data = await readJsonSafely(res, "Failed to save filters");
@@ -140,8 +161,10 @@ export default function Search() {
   async function applyFiltersAndRefresh() {
     try {
       setError("");
-      await saveFilters(currentFilterPayload());
+      setMessage("");
+      await saveFilters(buildCurrentFilters());
       await fetchResults();
+      setMessage("Filters updated.");
     } catch (e) {
       setError(e.message);
     }
@@ -178,7 +201,12 @@ export default function Search() {
         setSelectedChoice(data.currentUserOption);
       }
 
-      if (data.stage === "VOTING" || data.stage === "RESULT" || data.allSubmitted) {
+      if (
+        data.stage === "VOTING" ||
+        data.stage === "RESULT" ||
+        data.stage === "REPLAN_PROMPT" ||
+        data.allSubmitted
+      ) {
         navigate(`/vote/${code}?userId=${userId}&host=${queryHost || localStorage.getItem("host") || "0"}`);
       }
     } catch (e) {
@@ -194,6 +222,7 @@ export default function Search() {
 
     try {
       setError("");
+      setMessage("");
       setSubmittingChoice(true);
 
       const res = await fetch(`${API_BASE}/sessions/${code}/submission`, {
@@ -208,21 +237,42 @@ export default function Search() {
       const data = await readJsonSafely(res, "Submission route missing or failed");
       if (!res.ok) throw new Error(data.error || "Failed to submit choice");
 
+      setMessage("Choice submitted to the anonymous pool.");
       await loadSubmissionStatus();
     } catch (e) {
       setError(e.message);
     } finally {
       setSubmittingChoice(false);
+      setShowSubmitPrompt(false);
     }
   }
 
   function toggleTag(tag) {
-    setSelectedTags((prev) => (prev.includes(tag) ? prev.filter((t) => t !== tag) : [...prev, tag]));
+    setSelectedTags((currentTags) =>
+      currentTags.includes(tag)
+        ? currentTags.filter((currentTag) => currentTag !== tag)
+        : [...currentTags, tag]
+    );
   }
 
   function renderPrice(item) {
     if (item.price === null || typeof item.price === "undefined") return "Price unavailable";
     return `${item.currency || "GBP"} ${item.price}`;
+  }
+
+  function getPriceBadgeClass(item) {
+    const hasAnyBudget = budgetMin !== "" || budgetMax !== "";
+    if (!hasAnyBudget) return "badge";
+    return item.budgetOk ? "badge badge--success" : "badge";
+  }
+
+  function getRatingBadgeClass(item) {
+    if (minRating === "") return "badge";
+    return item.ratingOk ? "badge badge--success" : "badge";
+  }
+
+  function getTagBadgeClass(tag) {
+    return selectedTags.includes(tag) ? "badge badge--success" : "badge";
   }
 
   useEffect(() => {
@@ -232,14 +282,14 @@ export default function Search() {
     if (queryUserId) localStorage.setItem("userId", queryUserId);
     if (queryHost) localStorage.setItem("host", queryHost);
 
-    loadSession({ initForm: true });
+    loadSession({ initialiseMyFilters: true });
     loadSubmissionStatus();
   }, [code, queryUserId, queryHost]);
 
   useEffect(() => {
-    if (!didInitForm) return;
+    if (!didLoadMyFilters) return;
     fetchResults();
-  }, [didInitForm]);
+  }, [didLoadMyFilters]);
 
   useEffect(() => {
     const timer = setInterval(() => {
@@ -250,224 +300,285 @@ export default function Search() {
   }, [code, userId]);
 
   return (
-    <div style={{ padding: 24, fontFamily: "sans-serif" }}>
-      <h1>Search</h1>
-
-      {loadingSession ? <p>Loading session...</p> : null}
-      {error ? <p>{error}</p> : null}
+    <PageLayout
+      pageTitle="Search and select"
+      pageSubtitle="Refresh results, review your filters, and submit one choice to the anonymous group pool."
+    >
+      {loadingSession ? <div className="alert">Loading session...</div> : null}
+      {error ? <div className="alert alert--error" style={{ marginBottom: 20 }}>{error}</div> : null}
+      {message ? <div className="alert alert--warning" style={{ marginBottom: 20 }}>{message}</div> : null}
 
       {session ? (
-        <div style={{ marginBottom: 20 }}>
-          <p>
-            Session Code: <strong>{code}</strong>
-          </p>
-          <p>
-            Session: <strong>{session.sessionName}</strong>
-          </p>
-          <p>
-            Destination: <strong>{session.destination}</strong>
-          </p>
-          <p>
-            Planning Type: <strong>{session.planningType}</strong>
-          </p>
+        <div className="card" style={{ marginBottom: 20 }}>
+          <div className="info-list">
+            <div className="info-row">
+              <span className="info-row__label">Session code</span>
+              <strong>{code}</strong>
+            </div>
+            <div className="info-row">
+              <span className="info-row__label">Session</span>
+              <strong>{session.sessionName}</strong>
+            </div>
+            <div className="info-row">
+              <span className="info-row__label">Destination</span>
+              <strong>{session.destination}</strong>
+            </div>
+            <div className="info-row">
+              <span className="info-row__label">Planning type</span>
+              <strong>{session.planningType}</strong>
+            </div>
+          </div>
         </div>
       ) : null}
 
       {submissionStatus.currentUserSubmitted ? (
-        <div style={{ border: "1px solid #ccc", padding: 16, borderRadius: 8, marginBottom: 20 }}>
-          <h2 style={{ marginTop: 0 }}>Choice Submitted</h2>
+        <div className="card">
+          <h2 className="card__title">Choice submitted</h2>
+
           {submissionStatus.currentUserOption ? (
             <p>
-              You submitted: <strong>{submissionStatus.currentUserOption.title}</strong>
+              You submitted <strong>{submissionStatus.currentUserOption.title}</strong>.
             </p>
           ) : null}
-          <p>
-            Waiting for everyone else: <strong>{submissionStatus.submissionCount}</strong> /{" "}
-            <strong>{submissionStatus.totalUsers}</strong> submitted
+
+          <div className="status-panel">
+            <div className="info-row">
+              <span className="info-row__label">Group progress</span>
+              <strong>
+                {submissionStatus.submissionCount} / {submissionStatus.totalUsers}
+              </strong>
+            </div>
+
+            <div className="status-panel__progress">
+              <span
+                style={{
+                  width: `${
+                    submissionStatus.totalUsers > 0
+                      ? (submissionStatus.submissionCount / submissionStatus.totalUsers) * 100
+                      : 0
+                  }%`,
+                }}
+              />
+            </div>
+          </div>
+
+          <p className="inline-note" style={{ marginTop: 14 }}>
+            Voting will begin automatically once everyone has submitted one option.
           </p>
-          <p>Voting will begin automatically once all users have submitted one option.</p>
         </div>
       ) : (
         <>
-          <button type="button" onClick={() => setShowFilters((prev) => !prev)} style={{ marginBottom: 12 }}>
-            {showFilters ? "Hide Filters" : "Edit Filters"}
-          </button>
+          <div className="grid grid--2">
+            <section className="card">
+              <div className="button-row" style={{ marginBottom: 16 }}>
+                <button type="button" className="button button--secondary" onClick={() => setShowFilters((current) => !current)}>
+                  {showFilters ? "Hide Filters" : "Show Filters"}
+                </button>
 
-          {showFilters ? (
-            <div style={{ border: "1px solid #ccc", padding: 16, marginBottom: 20, borderRadius: 8 }}>
-              <h2 style={{ marginTop: 0 }}>Your Filters</h2>
-
-              <div style={{ marginBottom: 12 }}>
-                <label>Budget Min</label>
-                <br />
-                <input value={budgetMin} onChange={(e) => setBudgetMin(e.target.value)} placeholder="e.g. 50" />
+                <button type="button" className="button button--secondary" onClick={fetchResults} disabled={loadingResults}>
+                  {loadingResults ? "Refreshing..." : "Refresh Results"}
+                </button>
               </div>
 
-              <div style={{ marginBottom: 12 }}>
-                <label>Budget Max</label>
-                <br />
-                <input value={budgetMax} onChange={(e) => setBudgetMax(e.target.value)} placeholder="e.g. 200" />
-              </div>
+              {showFilters ? (
+                <div className="form-grid">
+                  <div className="form-grid form-grid--2">
+                    <div className="field">
+                      <label className="field__label">Budget min</label>
+                      <input
+                        className="input"
+                        value={budgetMin}
+                        onChange={(e) => setBudgetMin(e.target.value)}
+                        placeholder="e.g. 50"
+                      />
+                    </div>
 
-              <div style={{ marginBottom: 12 }}>
-                <label>Minimum Rating</label>
-                <br />
-                <select value={minRating} onChange={(e) => setMinRating(e.target.value)}>
-                  <option value="">Any</option>
-                  <option value="3">3+</option>
-                  <option value="3.5">3.5+</option>
-                  <option value="4">4+</option>
-                  <option value="4.5">4.5+</option>
-                </select>
-              </div>
+                    <div className="field">
+                      <label className="field__label">Budget max</label>
+                      <input
+                        className="input"
+                        value={budgetMax}
+                        onChange={(e) => setBudgetMax(e.target.value)}
+                        placeholder="e.g. 200"
+                      />
+                    </div>
+                  </div>
 
-              <div style={{ marginBottom: 12 }}>
-                <label>{session?.planningType === "ACTIVITIES" ? "Activity Categories" : "Hotel Amenities"}</label>
-                <div>
-                  {tagOptions.map((tag) => (
-                    <label key={tag} style={{ display: "block" }}>
-                      <input type="checkbox" checked={selectedTags.includes(tag)} onChange={() => toggleTag(tag)} />
-                      {tag}
+                  <div className="field">
+                    <label className="field__label">Minimum rating</label>
+                    <select className="select" value={minRating} onChange={(e) => setMinRating(e.target.value)}>
+                      <option value="">Any</option>
+                      <option value="3">3+</option>
+                      <option value="3.5">3.5+</option>
+                      <option value="4">4+</option>
+                      <option value="4.5">4.5+</option>
+                    </select>
+                  </div>
+
+                  <div className="field">
+                    <label className="field__label">
+                      {session?.planningType === "ACTIVITIES" ? "Activity categories" : "Hotel amenities"}
                     </label>
-                  ))}
+
+                    <div className="checkbox-list">
+                      {tagOptions.map((tag) => (
+                        <label key={tag} className="choice-row">
+                          <input
+                            type="checkbox"
+                            checked={selectedTags.includes(tag)}
+                            onChange={() => toggleTag(tag)}
+                          />
+                          <span>{tag}</span>
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="button-row">
+                    <button
+                      type="button"
+                      className="button button--primary"
+                      onClick={applyFiltersAndRefresh}
+                      disabled={loadingResults}
+                    >
+                      {loadingResults ? "Applying..." : "Apply Filters"}
+                    </button>
+                  </div>
                 </div>
+              ) : (
+                <p className="inline-note">Filters are hidden. Show them to edit your preferences.</p>
+              )}
+            </section>
+
+            <aside className="card">
+              <h2 className="card__title">Users in session</h2>
+
+              {users.length === 0 ? (
+                <div className="empty-state">No users yet.</div>
+              ) : (
+                <ul className="user-list">
+                  {users.map((user) => (
+                    <li key={user.userId} className="user-list__item">
+                      <span className="user-list__name">{user.displayName}</span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+
+              <div className="card__section">
+                <h3 className="card__title">Current selection</h3>
+
+                {!selectedChoice ? (
+                  <p className="inline-note">
+                    Select one option below. Your choice remains private until submitted.
+                  </p>
+                ) : (
+                  <div className="card card--muted">
+                    <strong>{selectedChoice.title}</strong>
+                    {selectedChoice.subtitle ? <p className="inline-note">{selectedChoice.subtitle}</p> : null}
+
+                    <div className="badge-row">
+                      <span className="badge badge--primary">Selected</span>
+                      <span className="badge">{renderPrice(selectedChoice)}</span>
+                    </div>
+                  </div>
+                )}
               </div>
-
-              <button type="button" onClick={applyFiltersAndRefresh} disabled={loadingResults}>
-                {loadingResults ? "Applying..." : "Apply Filters"}
-              </button>
-            </div>
-          ) : null}
-
-          <div style={{ marginBottom: 20 }}>
-            <button type="button" onClick={fetchResults} disabled={loadingResults}>
-              {loadingResults ? "Refreshing..." : "Refresh Results"}
-            </button>
+            </aside>
           </div>
 
-          <h2>Your Selected Choice</h2>
-          {!selectedChoice ? (
-            <p>Select one option below. You can only submit one option to the pool.</p>
-          ) : (
-            <div style={{ border: "1px solid #ccc", padding: 16, borderRadius: 8, marginBottom: 20 }}>
-              <p style={{ margin: "0 0 8px 0" }}>
-                <strong>{selectedChoice.title}</strong>
-              </p>
-              {selectedChoice.subtitle ? <p style={{ margin: "0 0 8px 0" }}>{selectedChoice.subtitle}</p> : null}
-              <p style={{ margin: "0 0 8px 0" }}>
-                <strong>Price:</strong> {renderPrice(selectedChoice)}
-              </p>
-              <div style={{ display: "flex", gap: 8 }}>
-                <button type="button" onClick={() => setSelectedChoice(null)}>
-                  Remove Choice
-                </button>
-                <button type="button" onClick={submitChoice} disabled={submittingChoice}>
-                  {submittingChoice ? "Submitting..." : "Submit Choice"}
-                </button>
-              </div>
-            </div>
-          )}
+          <div style={{ marginTop: 20 }}>
+            <h2 className="card__title">Search results</h2>
 
-          <h2>Search Results</h2>
+            {loadingResults ? <div className="alert">Loading results...</div> : null}
+            {!loadingResults && results.length === 0 ? <div className="empty-state">No results found.</div> : null}
 
-          {loadingResults ? <p>Loading results...</p> : null}
-          {!loadingResults && results.length === 0 ? <p>No results found.</p> : null}
+            <div className="option-grid">
+              {results.map((item) => {
+                const isSelected = selectedChoice?.sourceId === item.sourceId;
 
-          <div>
-            {results.map((item) => {
-              const isSelected = selectedChoice?.sourceId === item.sourceId;
+                return (
+                  <div key={item.sourceId} className={`option-card ${isSelected ? "option-card--selected" : ""}`}>
+                    {item.image ? (
+                      <img src={item.image} alt={item.title} className="option-card__image" />
+                    ) : (
+                      <div className="option-card__image option-card__image--placeholder">No image available</div>
+                    )}
 
-              return (
-                <div
-                  key={item.sourceId}
-                  style={{
-                    border: "1px solid #ccc",
-                    padding: 16,
-                    marginBottom: 16,
-                    borderRadius: 8,
-                  }}
-                >
-                  {item.image ? (
-                    <img
-                      src={item.image}
-                      alt={item.title}
-                      style={{
-                        width: "100%",
-                        maxWidth: 320,
-                        height: 180,
-                        objectFit: "cover",
-                        display: "block",
-                        marginBottom: 12,
-                      }}
-                    />
-                  ) : (
-                    <div
-                      style={{
-                        width: "100%",
-                        maxWidth: 320,
-                        height: 180,
-                        border: "1px solid #ddd",
-                        display: "flex",
-                        alignItems: "center",
-                        justifyContent: "center",
-                        marginBottom: 12,
-                      }}
-                    >
-                      No image
+                    <div>
+                      <h3 className="option-card__title">{item.title}</h3>
+                      {item.subtitle ? <p className="option-card__subtitle">{item.subtitle}</p> : null}
                     </div>
-                  )}
 
-                  <h3 style={{ margin: "0 0 8px 0" }}>{item.title}</h3>
+                    <div className="option-card__meta">
+                      <span className={getRatingBadgeClass(item)}>Rating: {item.rating ?? "Unavailable"}</span>
+                      <span className={getPriceBadgeClass(item)}>Price: {renderPrice(item)}</span>
+                    </div>
 
-                  {item.subtitle ? <p style={{ margin: "0 0 8px 0" }}>{item.subtitle}</p> : null}
+                    {item.tags?.length ? (
+                      <div className="badge-row">
+                        {item.tags.map((tag) => (
+                          <span key={tag} className={getTagBadgeClass(tag)}>
+                            {tag}
+                          </span>
+                        ))}
+                      </div>
+                    ) : null}
 
-                  <p style={{ margin: "0 0 8px 0" }}>
-                    <strong>Rating:</strong>{" "}
-                    {item.rating !== null && typeof item.rating !== "undefined" ? item.rating : "Unavailable"}
-                  </p>
+                    <div className="option-card__footer">
+                      {item.link ? (
+                        <a href={item.link} target="_blank" rel="noreferrer" className="inline-note">
+                          View source
+                        </a>
+                      ) : (
+                        <span className="inline-note">No source link</span>
+                      )}
 
-                  <p style={{ margin: "0 0 8px 0" }}>
-                    <strong>Price:</strong> {renderPrice(item)}
-                  </p>
-
-                  <p style={{ margin: "0 0 8px 0" }}>
-                    <strong>Matches your filters:</strong> {item.matchesFilters ? "Yes" : "No"}
-                  </p>
-
-                  {item.tags?.length ? (
-                    <p style={{ margin: "0 0 8px 0" }}>
-                      <strong>Tags:</strong> {item.tags.join(", ")}
-                    </p>
-                  ) : null}
-
-                  {item.link ? (
-                    <p style={{ margin: "0 0 12px 0" }}>
-                      <a href={item.link} target="_blank" rel="noreferrer">
-                        View source
-                      </a>
-                    </p>
-                  ) : null}
-
-                  <button type="button" onClick={() => setSelectedChoice(item)}>
-                    {isSelected ? "Selected" : "Select This Option"}
-                  </button>
-                </div>
-              );
-            })}
+                      <button
+                        type="button"
+                        className={`button ${isSelected ? "button--secondary" : "button--primary"}`}
+                        onClick={() => setSelectedChoice(item)}
+                      >
+                        {isSelected ? "Selected" : "Select Option"}
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
           </div>
         </>
       )}
 
-      <h2>Users in Session</h2>
-      {users.length === 0 ? (
-        <p>No users yet</p>
-      ) : (
-        <ul>
-          {users.map((u) => (
-            <li key={u.userId}>{u.displayName}</li>
-          ))}
-        </ul>
-      )}
-    </div>
+      <BottomBar
+        isVisible={!submissionStatus.currentUserSubmitted}
+        title={selectedChoice ? `Ready to submit: ${selectedChoice.title}` : "Select one option to continue"}
+        description={
+          selectedChoice
+            ? "Your submission stays private until it enters the anonymous candidate pool."
+            : "Choose a hotel or activity card above, then submit it to the group pool."
+        }
+        mainButtonText={submittingChoice ? "Submitting..." : "Submit Choice"}
+        onMainClick={() => setShowSubmitPrompt(true)}
+        mainDisabled={!selectedChoice || submittingChoice}
+        altButtonText={selectedChoice ? "Clear Selection" : ""}
+        onAltClick={selectedChoice ? () => setSelectedChoice(null) : null}
+      />
+
+      <ConfirmPopup
+        isOpen={showSubmitPrompt}
+        title="Submit this choice?"
+        message={
+          selectedChoice
+            ? `Submit "${selectedChoice.title}" to the anonymous group pool? You can only submit one option.`
+            : "No option selected."
+        }
+        confirmText="Submit Choice"
+        cancelText="Keep Editing"
+        onConfirm={submitChoice}
+        onCancel={() => setShowSubmitPrompt(false)}
+        loading={submittingChoice}
+      />
+    </PageLayout>
   );
 }
