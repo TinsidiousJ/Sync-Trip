@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import PageLayout from "../components/PageLayout.jsx";
 import ConfirmPopup from "../components/ConfirmPopup.jsx";
+import ItineraryPopup from "../components/ItineraryPopup.jsx";
 
 const API_BASE = "http://localhost:4000";
 
@@ -22,6 +23,7 @@ export default function Voting() {
   const [message, setMessage] = useState("");
   const [savingVotes, setSavingVotes] = useState(false);
   const [requestingReplan, setRequestingReplan] = useState(false);
+  const [showItineraryPopup, setShowItineraryPopup] = useState(false);
 
   const [showVoteSubmitPrompt, setShowVoteSubmitPrompt] = useState(false);
   const [nextPlanningType, setNextPlanningType] = useState("");
@@ -166,6 +168,10 @@ export default function Voting() {
 
       const candidatesYouCanVoteOn = candidates.filter((candidate) => candidate.canVote);
 
+      if (candidatesYouCanVoteOn.length === 0) {
+        throw new Error("There are no valid candidates available for you to vote on.");
+      }
+
       const votesToSend = candidatesYouCanVoteOn.map((candidate) => {
         const vote = voteState[candidate.optionId] || {};
 
@@ -297,6 +303,11 @@ export default function Voting() {
     <PageLayout
       pageTitle={isResultStage ? "Result" : "Voting"}
       pageSubtitle="All options are anonymous. Vote on every candidate except your own submission."
+      headerAction={
+        <button type="button" className="button button--secondary" onClick={() => setShowItineraryPopup(true)}>
+          View Itinerary
+        </button>
+      }
     >
       {error ? <div className="alert alert--error" style={{ marginBottom: 20 }}>{error}</div> : null}
       {message ? <div className="alert alert--warning" style={{ marginBottom: 20 }}>{message}</div> : null}
@@ -376,16 +387,6 @@ export default function Voting() {
                 <p className="inline-note">This option has been saved to the itinerary.</p>
 
                 <div className="button-row">
-                  <button
-                    type="button"
-                    className="button button--primary"
-                    onClick={() =>
-                      navigate(`/itinerary/${code}?userId=${userId}&host=${queryHost || localStorage.getItem("host") || "0"}`)
-                    }
-                  >
-                    View Itinerary
-                  </button>
-
                   {isHost ? (
                     <>
                       <button
@@ -596,6 +597,12 @@ export default function Voting() {
         onConfirm={() => requestReplan(nextPlanningType)}
         onCancel={() => setShowReplanPrompt(false)}
         loading={requestingReplan}
+      />
+
+      <ItineraryPopup
+        isOpen={showItineraryPopup}
+        sessionCode={code}
+        onClose={() => setShowItineraryPopup(false)}
       />
     </PageLayout>
   );

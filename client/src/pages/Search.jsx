@@ -3,6 +3,7 @@ import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import PageLayout from "../components/PageLayout.jsx";
 import ConfirmPopup from "../components/ConfirmPopup.jsx";
 import BottomBar from "../components/BottomBar.jsx";
+import ItineraryPopup from "../components/ItineraryPopup.jsx";
 
 const API_BASE = "http://localhost:4000";
 
@@ -44,6 +45,7 @@ export default function Search() {
   const [submittingChoice, setSubmittingChoice] = useState(false);
   const [showFilters, setShowFilters] = useState(true);
   const [showSubmitPrompt, setShowSubmitPrompt] = useState(false);
+  const [showItineraryPopup, setShowItineraryPopup] = useState(false);
 
   const [budgetMin, setBudgetMin] = useState("");
   const [budgetMax, setBudgetMax] = useState("");
@@ -237,7 +239,12 @@ export default function Search() {
       const data = await readJsonSafely(res, "Submission route missing or failed");
       if (!res.ok) throw new Error(data.error || "Failed to submit choice");
 
-      setMessage("Choice submitted to the anonymous pool.");
+      if (data.skippedVoting && data.winner) {
+        setMessage(`Everyone submitted the same option, so voting was skipped and "${data.winner.title}" was selected automatically.`);
+      } else {
+        setMessage("Choice submitted to the anonymous pool.");
+      }
+
       await loadSubmissionStatus();
     } catch (e) {
       setError(e.message);
@@ -303,6 +310,11 @@ export default function Search() {
     <PageLayout
       pageTitle="Search and select"
       pageSubtitle="Refresh results, review your filters, and submit one choice to the anonymous group pool."
+      headerAction={
+        <button type="button" className="button button--secondary" onClick={() => setShowItineraryPopup(true)}>
+          View Itinerary
+        </button>
+      }
     >
       {loadingSession ? <div className="alert">Loading session...</div> : null}
       {error ? <div className="alert alert--error" style={{ marginBottom: 20 }}>{error}</div> : null}
@@ -555,7 +567,7 @@ export default function Search() {
         title={selectedChoice ? `Ready to submit: ${selectedChoice.title}` : "Select one option to continue"}
         description={
           selectedChoice
-            ? "Your submission stays private until it enters the anonymous candidate pool."
+            ? "Your submission stays private until it enters the anonymous group pool."
             : "Choose a hotel or activity card above, then submit it to the group pool."
         }
         mainButtonText={submittingChoice ? "Submitting..." : "Submit Choice"}
@@ -578,6 +590,12 @@ export default function Search() {
         onConfirm={submitChoice}
         onCancel={() => setShowSubmitPrompt(false)}
         loading={submittingChoice}
+      />
+
+      <ItineraryPopup
+        isOpen={showItineraryPopup}
+        sessionCode={code}
+        onClose={() => setShowItineraryPopup(false)}
       />
     </PageLayout>
   );
