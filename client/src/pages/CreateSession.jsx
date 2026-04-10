@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import PageLayout from "../components/PageLayout.jsx";
 
@@ -6,272 +6,293 @@ const API_BASE = "http://localhost:4000";
 
 export default function CreateSession() {
   const navigate = useNavigate();
-  const blurTimeoutRef = useRef(null);
-
-  const [sessionCode, setSessionCode] = useState("");
-  const [loadingCode, setLoadingCode] = useState(true);
-  const [error, setError] = useState("");
 
   const [displayName, setDisplayName] = useState("");
   const [sessionName, setSessionName] = useState("");
   const [destination, setDestination] = useState("");
   const [planningType, setPlanningType] = useState("ACCOMMODATION");
 
-  const [countrySuggestions, setCountrySuggestions] = useState([]);
-  const [loadingCountries, setLoadingCountries] = useState(false);
-  const [showCountrySuggestions, setShowCountrySuggestions] = useState(false);
-  const [selectedCountry, setSelectedCountry] = useState(null);
+  const [sessionCode, setSessionCode] = useState("");
+  const [error, setError] = useState("");
+  const [message, setMessage] = useState("");
+  const [creating, setCreating] = useState(false);
 
-  useEffect(() => {
-    let cancelled = false;
+  const [destinationSuggestions, setDestinationSuggestions] = useState([]);
+  const [loadingSuggestions, setLoadingSuggestions] = useState(false);
+  const [showSuggestions, setShowSuggestions] = useState(false);
+  const [selectedDestination, setSelectedDestination] = useState(null);
 
-    async function reserveDraft() {
-      try {
-        setLoadingCode(true);
-        setError("");
+  const debounceRef = useRef(null);
+  const suggestionBoxRef = useRef(null);
 
-        const res = await fetch(`${API_BASE}/sessions/draft`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-        });
+  const canCreate = useMemo(() => {
+    return (
+      displayName.trim() &&
+      sessionName.trim() &&
+      destination.trim() &&
+      selectedDestination &&
+      !creating
+    );
+  }, [displayName, sessionName, destination, selectedDestination, creating]);
 
-        const data = await res.json();
-        if (!res.ok) throw new Error(data.error || "Failed to generate session code");
-        if (!cancelled) setSessionCode(data.sessionCode);
-      } catch (e) {
-        if (!cancelled) setError(e.message);
-      } finally {
-        if (!cancelled) setLoadingCode(false);
-      }
+  async function readJsonSafely(res, fallbackMessage) {
+    const text = await res.text();
+
+    try {
+      return JSON.parse(text);
+    } catch {
+      throw new Error(fallbackMessage);
     }
-
-    reserveDraft();
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  useEffect(() => {
-    let cancelled = false;
-
-    async function fetchCountrySuggestions() {
-      const query = destination.trim();
-
-      if (query.length < 2) {
-        setCountrySuggestions([]);
-        setLoadingCountries(false);
-        return;
-      }
-
-      try {
-        setLoadingCountries(true);
-
-        const res = await fetch(`${API_BASE}/locations/countries?text=${encodeURIComponent(query)}`);
-        const data = await res.json();
-
-        if (!res.ok) throw new Error(data.error || "Failed to load country suggestions");
-
-        if (!cancelled) {
-          setCountrySuggestions(data.results || []);
-        }
-      } catch (e) {
-        if (!cancelled) {
-          setCountrySuggestions([]);
-        }
-      } finally {
-        if (!cancelled) {
-          setLoadingCountries(false);
-        }
-      }
-    }
-
-    const timer = setTimeout(fetchCountrySuggestions, 250);
-    return () => {
-      cancelled = true;
-      clearTimeout(timer);
-    };
-  }, [destination]);
-
-  function chooseCountry(country) {
-    setDestination(country.name);
-    setSelectedCountry(country);
-    setCountrySuggestions([]);
-    setShowCountrySuggestions(false);
   }
 
-  function handleDestinationChange(value) {
-    setDestination(value);
-    setSelectedCountry(null);
-    setShowCountrySuggestions(true);
-  }
-
-  async function onCreateSession(e) {
-    e.preventDefault();
-    setError("");
-
-    if (!sessionCode) {
-      setError("No session code yet. Refresh the page.");
-      return;
-    }
-
-    if (!displayName || !sessionName || !destination) {
-      setError("Please fill in all fields.");
-      return;
-    }
-
-    if (!selectedCountry || selectedCountry.name !== destination.trim()) {
-      setError("Please choose a country from the suggestions.");
+  async function fetchDestinationSuggestions(searchText) {
+    if (!searchText || searchText.trim().length < 2) {
+      setDestinationSuggestions([]);
+      setShowSuggestions(false);
       return;
     }
 
     try {
+      setLoadingSuggestions(true);
+      setError("");
+
+      const res = await fetch(
+        `${API_BASE}/locations/destinations?text=${encodeURIComponent(searchText.trim())}`
+      );
+      const data = await readJsonSafely(res, "Failed to load destination suggestions");
+
+      if (!res.ok) {
+        throw new Error(data.error || "Failed to load destination suggestions");
+      }
+
+      const nextSuggestions = Array.isArray(data.results) ? data.results : [];
+      setDestinationSuggestions(nextSuggestions);
+      setShowSuggestions(true);
+    } catch (e) {
+      setDestinationSuggestions([]);
+      setShowSuggestions(false);
+      setError(e.message);
+    } finally {
+      setLoadingSuggestions(false);
+    }
+  }
+
+  function handleDestinationChange(value) {
+    setDestination(value);
+    setSelectedDestination(null);
+    setError("");
+    setMessage("");
+
+    if (debounceRef.current) {
+      clearTimeout(debounceRef.current);
+    }
+
+    debounceRef.current = setTimeout(() => {
+      fetchDestinationSuggestions(value);
+    }, 250);
+  }
+
+  function handleSuggestionSelect(item) {
+    setDestination(item.formatted || item.name);
+    setSelectedDestination(item);
+    setDestinationSuggestions([]);
+    setShowSuggestions(false);
+    setError("");
+  }
+
+  async function createDraftIfNeeded() {
+    if (sessionCode) return sessionCode;
+
+    const res = await fetch(`${API_BASE}/sessions/draft`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+    });
+
+    const data = await readJsonSafely(res, "Failed to create draft session");
+    if (!res.ok) throw new Error(data.error || "Failed to create draft session");
+
+    setSessionCode(data.sessionCode);
+    return data.sessionCode;
+  }
+
+  async function handleCreateSession(e) {
+    e.preventDefault();
+
+    try {
+      setError("");
+      setMessage("");
+
+      if (!displayName.trim() || !sessionName.trim() || !destination.trim()) {
+        throw new Error("Please complete all fields.");
+      }
+
+      if (!selectedDestination || (selectedDestination.formatted || selectedDestination.name) !== destination.trim()) {
+        throw new Error("Please choose a destination from the suggestions.");
+      }
+
+      setCreating(true);
+
+      const draftCode = await createDraftIfNeeded();
+
       const res = await fetch(`${API_BASE}/sessions/activate`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          sessionCode,
+          sessionCode: draftCode,
           displayName: displayName.trim(),
-          planningType,
           sessionName: sessionName.trim(),
-          destination: selectedCountry.name,
+          destination: selectedDestination.formatted || selectedDestination.name,
+          planningType,
         }),
       });
 
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Failed to create session");
+      const data = await readJsonSafely(res, "Failed to activate session");
+      if (!res.ok) throw new Error(data.error || "Failed to activate session");
 
       localStorage.setItem("sessionCode", data.sessionCode);
       localStorage.setItem("userId", data.userId);
       localStorage.setItem("host", "1");
 
       navigate(`/lobby/${data.sessionCode}?userId=${data.userId}&host=1`);
-    } catch (e2) {
-      setError(e2.message);
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setCreating(false);
     }
   }
 
+  useEffect(() => {
+    createDraftIfNeeded().catch((e) => setError(e.message));
+  }, []);
+
+  useEffect(() => {
+    function handleClickOutside(event) {
+      if (suggestionBoxRef.current && !suggestionBoxRef.current.contains(event.target)) {
+        setShowSuggestions(false);
+      }
+    }
+
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
+
   return (
     <PageLayout
-      pageTitle="Create a new trip session"
-      pageSubtitle="Set up the session, share the code with your group, and begin collaborative planning."
+      pageTitle="Create a new session"
+      pageSubtitle="Set up the trip, choose a destination from the suggestions, and invite your group with the generated session code."
     >
-      <div className="grid grid--2">
+      <div className="grid">
         <section className="card">
-          {error ? <div className="alert alert--error">{error}</div> : null}
+          <form onSubmit={handleCreateSession} className="form-grid">
+            {error ? <div className="alert alert--error">{error}</div> : null}
+            {message ? <div className="alert alert--warning">{message}</div> : null}
 
-          <form className="form-grid" onSubmit={onCreateSession}>
-            <div className="form-grid form-grid--2">
-              <div className="field">
-                <label className="field__label">Your display name</label>
-                <input
-                  className="input"
-                  value={displayName}
-                  onChange={(e) => setDisplayName(e.target.value)}
-                  placeholder="e.g. JohnDoe"
-                />
-              </div>
-
-              <div className="field">
-                <label className="field__label">Session name</label>
-                <input
-                  className="input"
-                  value={sessionName}
-                  onChange={(e) => setSessionName(e.target.value)}
-                  placeholder="e.g. Europe Trip 2026"
-                />
-              </div>
+            <div className="field">
+              <label className="field__label">Your display name</label>
+              <input
+                className="input"
+                value={displayName}
+                onChange={(e) => setDisplayName(e.target.value)}
+                placeholder="e.g. Tyler"
+              />
             </div>
 
-            <div className="form-grid form-grid--2">
-              <div className="field" style={{ position: "relative" }}>
-                <label className="field__label">Destination country</label>
-                <input
-                  className="input"
-                  value={destination}
-                  onChange={(e) => handleDestinationChange(e.target.value)}
-                  onFocus={() => setShowCountrySuggestions(true)}
-                  onBlur={() => {
-                    blurTimeoutRef.current = setTimeout(() => {
-                      setShowCountrySuggestions(false);
-                    }, 150);
-                  }}
-                  placeholder="Start typing a country..."
-                  autoComplete="off"
-                />
+            <div className="field">
+              <label className="field__label">Session name</label>
+              <input
+                className="input"
+                value={sessionName}
+                onChange={(e) => setSessionName(e.target.value)}
+                placeholder="e.g. Paris 2026"
+              />
+            </div>
 
-                <div className="field__hint">
-                  Choose from the list so only valid countries can be used.
+            <div className="field suggestion-field" ref={suggestionBoxRef}>
+              <label className="field__label">Destination</label>
+              <input
+                className="input"
+                value={destination}
+                onChange={(e) => handleDestinationChange(e.target.value)}
+                onFocus={() => {
+                  if (destinationSuggestions.length > 0) {
+                    setShowSuggestions(true);
+                  }
+                }}
+                placeholder="Start typing a city or country"
+                autoComplete="off"
+              />
+
+              <div className="field__hint">
+                Choose from the list so only valid destinations can be used.
+              </div>
+
+              {loadingSuggestions ? (
+                <div className="suggestion-dropdown">
+                  <button type="button" className="suggestion-item suggestion-item--static">
+                    Loading suggestions...
+                  </button>
                 </div>
+              ) : null}
 
-                {showCountrySuggestions && (countrySuggestions.length > 0 || loadingCountries) ? (
-                  <div
-                    style={{
-                      position: "absolute",
-                      top: "100%",
-                      left: 0,
-                      right: 0,
-                      background: "#fff",
-                      border: "1px solid var(--border)",
-                      borderRadius: 12,
-                      boxShadow: "var(--shadow)",
-                      marginTop: 8,
-                      overflow: "hidden",
-                      zIndex: 20,
-                    }}
-                  >
-                    {loadingCountries ? (
-                      <div style={{ padding: 12, color: "var(--text-soft)" }}>Loading suggestions...</div>
-                    ) : (
-                      countrySuggestions.map((country) => (
-                        <button
-                          key={country.placeId}
-                          type="button"
-                          onMouseDown={() => {
-                            if (blurTimeoutRef.current) clearTimeout(blurTimeoutRef.current);
-                            chooseCountry(country);
-                          }}
-                          style={{
-                            display: "block",
-                            width: "100%",
-                            textAlign: "left",
-                            padding: 12,
-                            border: "none",
-                            background: "#fff",
-                            borderBottom: "1px solid var(--border)",
-                          }}
-                        >
-                          <strong>{country.name}</strong>
-                        </button>
-                      ))
-                    )}
-                  </div>
-                ) : null}
-              </div>
+              {!loadingSuggestions && showSuggestions && destinationSuggestions.length > 0 ? (
+                <div className="suggestion-dropdown">
+                  {destinationSuggestions.map((item) => (
+                    <button
+                      key={item.placeId}
+                      type="button"
+                      className="suggestion-item"
+                      onClick={() => handleSuggestionSelect(item)}
+                    >
+                      <div className="suggestion-item__text">
+                        <span className="suggestion-item__title">{item.name}</span>
+                        {item.subtitle ? (
+                          <span className="suggestion-item__subtitle">{item.subtitle}</span>
+                        ) : null}
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              ) : null}
 
-              <div className="field">
-                <label className="field__label">Planning stage</label>
-                <select className="select" value={planningType} onChange={(e) => setPlanningType(e.target.value)}>
-                  <option value="ACCOMMODATION">Accommodation</option>
-                  <option value="ACTIVITIES">Activities</option>
-                </select>
-              </div>
+              {!loadingSuggestions &&
+              showSuggestions &&
+              destination.trim().length >= 2 &&
+              destinationSuggestions.length === 0 ? (
+                <div className="suggestion-dropdown">
+                  <button type="button" className="suggestion-item suggestion-item--static">
+                    No matching destinations found
+                  </button>
+                </div>
+              ) : null}
+            </div>
+
+            <div className="field">
+              <label className="field__label">Planning stage</label>
+              <select
+                className="select"
+                value={planningType}
+                onChange={(e) => setPlanningType(e.target.value)}
+              >
+                <option value="ACCOMMODATION">Accommodation</option>
+                <option value="ACTIVITIES">Activities</option>
+              </select>
             </div>
 
             <div className="button-row">
-              <button type="submit" className="button button--primary" disabled={!sessionCode || loadingCode}>
-                {loadingCode ? "Generating code..." : "Create Session"}
+              <button type="submit" className="button button--primary" disabled={!canCreate}>
+                {creating ? "Creating..." : "Create Session"}
               </button>
             </div>
           </form>
         </section>
 
-        <aside className="card">
+        <section className="card">
           <h2 className="card__title">Session code</h2>
 
           <div className="session-code-box">
             <div>
               <div className="inline-note">Share this with your group</div>
-              <div className="session-code-box__code">{loadingCode ? "......" : sessionCode || "------"}</div>
+              <div className="session-code-box__code">{sessionCode || "Loading..."}</div>
             </div>
           </div>
 
@@ -283,7 +304,7 @@ export default function CreateSession() {
               <span className="badge">Host starts session</span>
             </div>
           </div>
-        </aside>
+        </section>
       </div>
     </PageLayout>
   );

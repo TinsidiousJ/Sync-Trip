@@ -583,6 +583,58 @@ img {
   display: grid;
   gap: 20px;
 }
+.filter-dropdown-panel {
+  margin-top: 12px;
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  background: #fbfcff;
+}
+
+.vote-focus-layout {
+  display: grid;
+  grid-template-columns: 64px minmax(0, 1fr) 64px;
+  gap: 16px;
+  align-items: stretch;
+}
+
+.vote-focus-card {
+  max-width: 760px;
+  margin: 0 auto;
+}
+
+.vote-nav-arrow {
+  border: 1px solid var(--border-strong);
+  background: #fff;
+  color: var(--text);
+  border-radius: 16px;
+  min-height: 100%;
+  font-size: 1.75rem;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: 0.2s ease;
+}
+
+.vote-nav-arrow:hover:not(:disabled) {
+  background: #f8fbff;
+}
+
+.vote-nav-arrow:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+@media (max-width: 900px) {
+  .vote-focus-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .vote-nav-arrow {
+    min-height: 52px;
+  }
+}
 
 @media (max-width: 900px) {
   .grid--2,
@@ -630,4 +682,60 @@ img {
   .sticky-action__buttons .button {
     flex: 1;
   }
+}
+
+.suggestion-field {
+  position: relative;
+  z-index: 20;
+}
+
+.suggestion-dropdown {
+  position: absolute;
+  top: calc(100% + 8px);
+  left: 0;
+  right: 0;
+  z-index: 40;
+  background: #fff;
+  border: 1px solid var(--border-strong);
+  border-radius: 16px;
+  box-shadow: 0 18px 36px rgba(15, 23, 42, 0.14);
+  overflow: hidden;
+}
+
+.suggestion-item {
+  width: 100%;
+  border: 0;
+  background: #fff;
+  padding: 14px 16px;
+  text-align: left;
+  color: var(--text);
+  display: block;
+}
+
+.suggestion-item:hover:not(.suggestion-item--static) {
+  background: #f8fbff;
+}
+
+.suggestion-item + .suggestion-item {
+  border-top: 1px solid var(--border);
+}
+
+.suggestion-item--static {
+  cursor: default;
+  color: var(--text-soft);
+}
+
+.suggestion-item__text {
+  display: grid;
+  gap: 2px;
+}
+
+.suggestion-item__title {
+  font-weight: 700;
+  color: var(--text);
+}
+
+.suggestion-item__subtitle {
+  font-size: 0.9rem;
+  color: var(--text-soft);
 }

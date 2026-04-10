@@ -29,6 +29,8 @@ export default function Voting() {
   const [nextPlanningType, setNextPlanningType] = useState("");
   const [showReplanPrompt, setShowReplanPrompt] = useState(false);
 
+  const [activeCandidateIndex, setActiveCandidateIndex] = useState(0);
+
   const hasShownReplanPromptRef = useRef(false);
 
   async function readJsonSafely(res, fallbackMessage) {
@@ -71,12 +73,13 @@ export default function Voting() {
 
       if (!res.ok) throw new Error(data.error || "Failed to load voting candidates");
 
-      setCandidates(data.candidates || []);
+      const nextCandidates = data.candidates || [];
+      setCandidates(nextCandidates);
 
       setVoteState((currentState) => {
         const nextVoteState = {};
 
-        for (const candidate of data.candidates || []) {
+        for (const candidate of nextCandidates) {
           const existingVoteFromBackend = candidate.myVote
             ? {
                 approval: candidate.myVote.approval ?? null,
@@ -95,6 +98,12 @@ export default function Voting() {
         }
 
         return nextVoteState;
+      });
+
+      setActiveCandidateIndex((currentIndex) => {
+        if (nextCandidates.length === 0) return 0;
+        if (currentIndex > nextCandidates.length - 1) return nextCandidates.length - 1;
+        return currentIndex;
       });
     } catch (e) {
       setError(e.message);
@@ -158,6 +167,14 @@ export default function Voting() {
   function renderPrice(item) {
     if (item.price === null || typeof item.price === "undefined") return "Price unavailable";
     return `${item.currency || "GBP"} ${item.price}`;
+  }
+
+  function goPreviousCandidate() {
+    setActiveCandidateIndex((currentIndex) => Math.max(currentIndex - 1, 0));
+  }
+
+  function goNextCandidate() {
+    setActiveCandidateIndex((currentIndex) => Math.min(currentIndex + 1, candidates.length - 1));
   }
 
   async function submitVotes() {
@@ -298,11 +315,25 @@ export default function Voting() {
 
   const isResultStage = status?.stage === "RESULT" || session?.stage === "REPLAN_PROMPT";
   const isHost = session?.hostUserId === userId;
+  const activeCandidate = candidates[activeCandidateIndex] || null;
+  const currentVote = activeCandidate
+    ? voteState[activeCandidate.optionId] || {
+        approval: null,
+        ranking: "",
+        acknowledgedFilterViolation: false,
+      }
+    : null;
+
+  const showFilterWarning =
+    activeCandidate &&
+    activeCandidate.canVote &&
+    currentVote?.approval === true &&
+    !activeCandidate.matchesUserFilters;
 
   return (
     <PageLayout
       pageTitle={isResultStage ? "Result" : "Voting"}
-      pageSubtitle="All options are anonymous. Vote on every candidate except your own submission."
+      pageSubtitle="All options are anonymous. Review one option at a time and vote on every candidate except your own submission."
       headerAction={
         <button type="button" className="button button--secondary" onClick={() => setShowItineraryPopup(true)}>
           View Itinerary
@@ -426,142 +457,168 @@ export default function Voting() {
       ) : null}
 
       {!isResultStage ? (
-        <div className="option-grid">
-          {candidates.length === 0 ? (
-            <div className="empty-state">Loading candidates...</div>
-          ) : (
-            candidates.map((candidate) => {
-              const currentVote = voteState[candidate.optionId] || {
-                approval: null,
-                ranking: "",
-                acknowledgedFilterViolation: false,
-              };
+        candidates.length === 0 ? (
+          <div className="empty-state">Loading candidates...</div>
+        ) : activeCandidate ? (
+          <div className="vote-focus-layout">
+            <button
+              type="button"
+              className="vote-nav-arrow"
+              onClick={goPreviousCandidate}
+              disabled={activeCandidateIndex === 0}
+              aria-label="Previous option"
+            >
+              ←
+            </button>
 
-              const showFilterWarning =
-                candidate.canVote &&
-                currentVote.approval === true &&
-                !candidate.matchesUserFilters;
+            <div className="option-card vote-focus-card">
+              {activeCandidate.image ? (
+                <img src={activeCandidate.image} alt={activeCandidate.title} className="option-card__image" />
+              ) : (
+                <div className="option-card__image option-card__image--placeholder">No image available</div>
+              )}
 
-              return (
-                <div key={candidate.optionId} className="option-card">
-                  {candidate.image ? (
-                    <img src={candidate.image} alt={candidate.title} className="option-card__image" />
-                  ) : (
-                    <div className="option-card__image option-card__image--placeholder">No image available</div>
-                  )}
-
-                  <div>
-                    <div className="badge-row" style={{ marginBottom: 8 }}>
-                      <span className="badge badge--primary">{candidate.label}</span>
-                      {!candidate.canVote ? <span className="badge badge--warning">Your own submission</span> : null}
-                    </div>
-
-                    <h3 className="option-card__title">{candidate.title}</h3>
-                    {candidate.subtitle ? <p className="option-card__subtitle">{candidate.subtitle}</p> : null}
-                  </div>
-
-                  <div className="option-card__meta">
-                    <span className="badge">Rating: {candidate.rating ?? "Unavailable"}</span>
-                    <span className="badge">Price: {renderPrice(candidate)}</span>
-                  </div>
-
-                  {candidate.tags?.length ? (
-                    <div className="badge-row">
-                      {candidate.tags.map((tag) => (
-                        <span key={tag} className="badge">
-                          {tag}
-                        </span>
-                      ))}
-                    </div>
-                  ) : null}
-
-                  {candidate.link ? (
-                    <a href={candidate.link} target="_blank" rel="noreferrer" className="inline-note">
-                      View source
-                    </a>
-                  ) : null}
-
-                  {!candidate.canVote ? (
-                    <div className="alert alert--warning">You cannot vote on your own submission.</div>
-                  ) : (
-                    <>
-                      <div className="radio-list">
-                        <label className="choice-row">
-                          <input
-                            type="radio"
-                            name={`approval-${candidate.optionId}`}
-                            checked={currentVote.approval === true}
-                            onChange={() => updateVote(candidate.optionId, { approval: true })}
-                          />
-                          <span>Approve option</span>
-                        </label>
-
-                        <label className="choice-row">
-                          <input
-                            type="radio"
-                            name={`approval-${candidate.optionId}`}
-                            checked={currentVote.approval === false}
-                            onChange={() =>
-                              updateVote(candidate.optionId, {
-                                approval: false,
-                                ranking: "",
-                                acknowledgedFilterViolation: false,
-                              })
-                            }
-                          />
-                          <span>Decline option</span>
-                        </label>
-                      </div>
-
-                      {currentVote.approval === true ? (
-                        <div className="field">
-                          <label className="field__label">Your rating contribution</label>
-                          <div className="field__hint">Use 5 for your highest preference and 1 for your lowest.</div>
-                          <select
-                            className="select"
-                            value={currentVote.ranking}
-                            onChange={(e) => updateVote(candidate.optionId, { ranking: e.target.value })}
-                          >
-                            <option value="">Choose</option>
-                            <option value="1">1 - Lowest</option>
-                            <option value="2">2</option>
-                            <option value="3">3</option>
-                            <option value="4">4</option>
-                            <option value="5">5 - Highest</option>
-                          </select>
-                        </div>
-                      ) : null}
-
-                      {showFilterWarning ? (
-                        <div className="alert alert--error">
-                          <p style={{ marginTop: 0 }}>
-                            This approval is outside your saved filters. You can still continue if you acknowledge this.
-                          </p>
-                          <label className="choice-row">
-                            <input
-                              type="checkbox"
-                              checked={Boolean(currentVote.acknowledgedFilterViolation)}
-                              onChange={(e) =>
-                                updateVote(candidate.optionId, {
-                                  acknowledgedFilterViolation: e.target.checked,
-                                })
-                              }
-                            />
-                            <span>I understand and want to continue</span>
-                          </label>
-                        </div>
-                      ) : null}
-                    </>
-                  )}
+              <div>
+                <div className="badge-row" style={{ marginBottom: 8 }}>
+                  <span className="badge badge--primary">{activeCandidate.label}</span>
+                  <span className="badge">
+                    {activeCandidateIndex + 1} / {candidates.length}
+                  </span>
+                  {!activeCandidate.canVote ? <span className="badge badge--warning">Your own submission</span> : null}
                 </div>
-              );
-            })
-          )}
-        </div>
+
+                <h3 className="option-card__title">{activeCandidate.title}</h3>
+                {activeCandidate.subtitle ? <p className="option-card__subtitle">{activeCandidate.subtitle}</p> : null}
+              </div>
+
+              <div className="option-card__meta">
+                <span className="badge">Rating: {activeCandidate.rating ?? "Unavailable"}</span>
+                <span className="badge">Price: {renderPrice(activeCandidate)}</span>
+              </div>
+
+              {activeCandidate.tags?.length ? (
+                <div className="badge-row">
+                  {activeCandidate.tags.map((tag) => (
+                    <span key={tag} className="badge">
+                      {tag}
+                    </span>
+                  ))}
+                </div>
+              ) : null}
+
+              {activeCandidate.link ? (
+                <a href={activeCandidate.link} target="_blank" rel="noreferrer" className="inline-note">
+                  View source
+                </a>
+              ) : null}
+
+              {!activeCandidate.canVote ? (
+                <div className="alert alert--warning">You cannot vote on your own submission.</div>
+              ) : (
+                <>
+                  <div className="radio-list">
+                    <label className="choice-row">
+                      <input
+                        type="radio"
+                        name={`approval-${activeCandidate.optionId}`}
+                        checked={currentVote.approval === true}
+                        onChange={() => updateVote(activeCandidate.optionId, { approval: true })}
+                      />
+                      <span>Approve option</span>
+                    </label>
+
+                    <label className="choice-row">
+                      <input
+                        type="radio"
+                        name={`approval-${activeCandidate.optionId}`}
+                        checked={currentVote.approval === false}
+                        onChange={() =>
+                          updateVote(activeCandidate.optionId, {
+                            approval: false,
+                            ranking: "",
+                            acknowledgedFilterViolation: false,
+                          })
+                        }
+                      />
+                      <span>Decline option</span>
+                    </label>
+                  </div>
+
+                  {currentVote.approval === true ? (
+                    <div className="field">
+                      <label className="field__label">Your rating contribution</label>
+                      <div className="field__hint">Use 5 for your highest preference and 1 for your lowest.</div>
+                      <select
+                        className="select"
+                        value={currentVote.ranking}
+                        onChange={(e) => updateVote(activeCandidate.optionId, { ranking: e.target.value })}
+                      >
+                        <option value="">Choose</option>
+                        <option value="1">1 - Lowest</option>
+                        <option value="2">2</option>
+                        <option value="3">3</option>
+                        <option value="4">4</option>
+                        <option value="5">5 - Highest</option>
+                      </select>
+                    </div>
+                  ) : null}
+
+                  {showFilterWarning ? (
+                    <div className="alert alert--error">
+                      <p style={{ marginTop: 0 }}>
+                        This approval is outside your saved filters. You can still continue if you acknowledge this.
+                      </p>
+                      <label className="choice-row">
+                        <input
+                          type="checkbox"
+                          checked={Boolean(currentVote.acknowledgedFilterViolation)}
+                          onChange={(e) =>
+                            updateVote(activeCandidate.optionId, {
+                              acknowledgedFilterViolation: e.target.checked,
+                            })
+                          }
+                        />
+                        <span>I understand and want to continue</span>
+                      </label>
+                    </div>
+                  ) : null}
+                </>
+              )}
+            </div>
+
+            <button
+              type="button"
+              className="vote-nav-arrow"
+              onClick={goNextCandidate}
+              disabled={activeCandidateIndex === candidates.length - 1}
+              aria-label="Next option"
+            >
+              →
+            </button>
+          </div>
+        ) : null
       ) : null}
 
       {!isResultStage ? (
         <div className="button-row" style={{ marginTop: 20 }}>
+          <button
+            type="button"
+            className="button button--secondary"
+            onClick={goPreviousCandidate}
+            disabled={activeCandidateIndex === 0}
+          >
+            Previous
+          </button>
+
+          <button
+            type="button"
+            className="button button--secondary"
+            onClick={goNextCandidate}
+            disabled={activeCandidateIndex === candidates.length - 1}
+          >
+            Next
+          </button>
+
           <button
             type="button"
             className="button button--primary"

@@ -43,7 +43,7 @@ export default function Search() {
   const [loadingSession, setLoadingSession] = useState(true);
   const [loadingResults, setLoadingResults] = useState(false);
   const [submittingChoice, setSubmittingChoice] = useState(false);
-  const [showFilters, setShowFilters] = useState(true);
+  const [showFilters, setShowFilters] = useState(false);
   const [showSubmitPrompt, setShowSubmitPrompt] = useState(false);
   const [showItineraryPopup, setShowItineraryPopup] = useState(false);
 
@@ -167,6 +167,7 @@ export default function Search() {
       await saveFilters(buildCurrentFilters());
       await fetchResults();
       setMessage("Filters updated.");
+      setShowFilters(false);
     } catch (e) {
       setError(e.message);
     }
@@ -262,10 +263,13 @@ export default function Search() {
     );
   }
 
-  function renderPrice(item) {
-    if (item.price === null || typeof item.price === "undefined") return "Price unavailable";
-    return `${item.currency || "GBP"} ${item.price}`;
+function renderPrice(item) {
+  if (item.price !== null && typeof item.price !== "undefined" && Number.isFinite(Number(item.price))) {
+    return `${item.currency || "GBP"} ${Number(item.price)}`;
   }
+
+  return "Price unavailable";
+}
 
   function getPriceBadgeClass(item) {
     const hasAnyBudget = budgetMin !== "" || budgetMax !== "";
@@ -281,6 +285,15 @@ export default function Search() {
   function getTagBadgeClass(tag) {
     return selectedTags.includes(tag) ? "badge badge--success" : "badge";
   }
+
+  const activeFilterCount = useMemo(() => {
+    let count = 0;
+    if (budgetMin !== "") count += 1;
+    if (budgetMax !== "") count += 1;
+    if (minRating !== "") count += 1;
+    if (selectedTags.length > 0) count += selectedTags.length;
+    return count;
+  }, [budgetMin, budgetMax, minRating, selectedTags]);
 
   useEffect(() => {
     if (!code) return;
@@ -383,8 +396,12 @@ export default function Search() {
           <div className="grid grid--2">
             <section className="card">
               <div className="button-row" style={{ marginBottom: 16 }}>
-                <button type="button" className="button button--secondary" onClick={() => setShowFilters((current) => !current)}>
-                  {showFilters ? "Hide Filters" : "Show Filters"}
+                <button
+                  type="button"
+                  className="button button--secondary"
+                  onClick={() => setShowFilters((current) => !current)}
+                >
+                  {showFilters ? "Hide Filters" : `Filters${activeFilterCount > 0 ? ` (${activeFilterCount})` : ""}`}
                 </button>
 
                 <button type="button" className="button button--secondary" onClick={fetchResults} disabled={loadingResults}>
@@ -393,72 +410,74 @@ export default function Search() {
               </div>
 
               {showFilters ? (
-                <div className="form-grid">
-                  <div className="form-grid form-grid--2">
-                    <div className="field">
-                      <label className="field__label">Budget min</label>
-                      <input
-                        className="input"
-                        value={budgetMin}
-                        onChange={(e) => setBudgetMin(e.target.value)}
-                        placeholder="e.g. 50"
-                      />
+                <div className="filter-dropdown-panel">
+                  <div className="form-grid">
+                    <div className="form-grid form-grid--2">
+                      <div className="field">
+                        <label className="field__label">Budget min</label>
+                        <input
+                          className="input"
+                          value={budgetMin}
+                          onChange={(e) => setBudgetMin(e.target.value)}
+                          placeholder="e.g. 50"
+                        />
+                      </div>
+
+                      <div className="field">
+                        <label className="field__label">Budget max</label>
+                        <input
+                          className="input"
+                          value={budgetMax}
+                          onChange={(e) => setBudgetMax(e.target.value)}
+                          placeholder="e.g. 200"
+                        />
+                      </div>
                     </div>
 
                     <div className="field">
-                      <label className="field__label">Budget max</label>
-                      <input
-                        className="input"
-                        value={budgetMax}
-                        onChange={(e) => setBudgetMax(e.target.value)}
-                        placeholder="e.g. 200"
-                      />
+                      <label className="field__label">Minimum rating</label>
+                      <select className="select" value={minRating} onChange={(e) => setMinRating(e.target.value)}>
+                        <option value="">Any</option>
+                        <option value="3">3+</option>
+                        <option value="3.5">3.5+</option>
+                        <option value="4">4+</option>
+                        <option value="4.5">4.5+</option>
+                      </select>
                     </div>
-                  </div>
 
-                  <div className="field">
-                    <label className="field__label">Minimum rating</label>
-                    <select className="select" value={minRating} onChange={(e) => setMinRating(e.target.value)}>
-                      <option value="">Any</option>
-                      <option value="3">3+</option>
-                      <option value="3.5">3.5+</option>
-                      <option value="4">4+</option>
-                      <option value="4.5">4.5+</option>
-                    </select>
-                  </div>
+                    <div className="field">
+                      <label className="field__label">
+                        {session?.planningType === "ACTIVITIES" ? "Activity categories" : "Hotel amenities"}
+                      </label>
 
-                  <div className="field">
-                    <label className="field__label">
-                      {session?.planningType === "ACTIVITIES" ? "Activity categories" : "Hotel amenities"}
-                    </label>
-
-                    <div className="checkbox-list">
-                      {tagOptions.map((tag) => (
-                        <label key={tag} className="choice-row">
-                          <input
-                            type="checkbox"
-                            checked={selectedTags.includes(tag)}
-                            onChange={() => toggleTag(tag)}
-                          />
-                          <span>{tag}</span>
-                        </label>
-                      ))}
+                      <div className="checkbox-list">
+                        {tagOptions.map((tag) => (
+                          <label key={tag} className="choice-row">
+                            <input
+                              type="checkbox"
+                              checked={selectedTags.includes(tag)}
+                              onChange={() => toggleTag(tag)}
+                            />
+                            <span>{tag}</span>
+                          </label>
+                        ))}
+                      </div>
                     </div>
-                  </div>
 
-                  <div className="button-row">
-                    <button
-                      type="button"
-                      className="button button--primary"
-                      onClick={applyFiltersAndRefresh}
-                      disabled={loadingResults}
-                    >
-                      {loadingResults ? "Applying..." : "Apply Filters"}
-                    </button>
+                    <div className="button-row">
+                      <button
+                        type="button"
+                        className="button button--primary"
+                        onClick={applyFiltersAndRefresh}
+                        disabled={loadingResults}
+                      >
+                        {loadingResults ? "Applying..." : "Apply Filters"}
+                      </button>
+                    </div>
                   </div>
                 </div>
               ) : (
-                <p className="inline-note">Filters are hidden. Show them to edit your preferences.</p>
+                <p className="inline-note">Use the Filters button to view or change your preferences.</p>
               )}
             </section>
 
@@ -524,7 +543,9 @@ export default function Search() {
 
                     <div className="option-card__meta">
                       <span className={getRatingBadgeClass(item)}>Rating: {item.rating ?? "Unavailable"}</span>
-                      <span className={getPriceBadgeClass(item)}>Price: {renderPrice(item)}</span>
+                      {item.price !== null && typeof item.price !== "undefined" ? (
+                        <span className={getPriceBadgeClass(item)}>Price: {renderPrice(item)}</span>
+                      ) : null}
                     </div>
 
                     {item.tags?.length ? (
