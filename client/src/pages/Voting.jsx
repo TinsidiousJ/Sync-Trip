@@ -6,6 +6,18 @@ import ItineraryPopup from "../components/ItineraryPopup.jsx";
 
 const API_BASE = "http://localhost:4000";
 
+function formatTagLabel(tag) {
+  return String(tag || "")
+    .toLowerCase()
+    .split("_")
+    .map((part) => (part ? part.charAt(0).toUpperCase() + part.slice(1) : ""))
+    .join(" ");
+}
+
+function hasActualPriceText(value) {
+  return /\d/.test(String(value || ""));
+}
+
 export default function Voting() {
   const navigate = useNavigate();
   const { code } = useParams();
@@ -31,7 +43,17 @@ export default function Voting() {
 
   const [activeCandidateIndex, setActiveCandidateIndex] = useState(0);
 
-  const hasShownReplanPromptRef = useRef(false);
+  const [pendingItineraryRequest, setPendingItineraryRequest] = useState(null);
+  const [approvingItineraryRequest, setApprovingItineraryRequest] = useState(false);
+  const [showItineraryRequestPopup, setShowItineraryRequestPopup] = useState(false);
+
+  const [showIncomingReplanPopup, setShowIncomingReplanPopup] = useState(false);
+  const [incomingPromptId, setIncomingPromptId] = useState("");
+  const [incomingPlanningType, setIncomingPlanningType] = useState("");
+  const [respondingToIncomingReplan, setRespondingToIncomingReplan] = useState(false);
+
+  const lastSeenPromptIdRef = useRef("");
+  const lastSeenItineraryRequestIdRef = useRef("");
 
   async function readJsonSafely(res, fallbackMessage) {
     const text = await res.text();
@@ -73,7 +95,14 @@ export default function Voting() {
 
       if (!res.ok) throw new Error(data.error || "Failed to load voting candidates");
 
-      const nextCandidates = data.candidates || [];
+      const nextCandidatesRaw = data.candidates || [];
+
+      const votable = nextCandidatesRaw.filter((candidate) => candidate.canVote);
+      const ownExclusiveSubmissions = nextCandidatesRaw.filter(
+        (candidate) => !candidate.canVote && !candidate.sharedSubmission
+      );
+      const nextCandidates = [...votable, ...ownExclusiveSubmissions];
+
       setCandidates(nextCandidates);
 
       setVoteState((currentState) => {
@@ -123,16 +152,71 @@ export default function Voting() {
     }
   }
 
+  async function loadPendingItineraryRequest() {
+    try {
+      const res = await fetch(`${API_BASE}/sessions/${code}/itinerary`);
+      const data = await readJsonSafely(res, "Failed to load itinerary status");
+
+      if (!res.ok) throw new Error(data.error || "Failed to load itinerary status");
+
+      setPendingItineraryRequest(data.pendingRequest || null);
+    } catch (e) {
+      setError(e.message);
+    }
+  }
+
+  async function approvePendingItineraryRequest() {
+    if (!pendingItineraryRequest?.requestId) return;
+
+    try {
+      setError("");
+      setMessage("");
+      setApprovingItineraryRequest(true);
+
+      const res = await fetch(
+        `${API_BASE}/sessions/${code}/itinerary/requests/${pendingItineraryRequest.requestId}/approve`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ userId }),
+        }
+      );
+
+      const data = await readJsonSafely(res, "Failed to approve itinerary request");
+      if (!res.ok) throw new Error(data.error || "Failed to approve itinerary request");
+
+      if (data.applied) {
+        setMessage("Itinerary request approved by everyone and applied.");
+      } else {
+        setMessage("Itinerary request approved. Waiting for the remaining users.");
+      }
+
+      await loadPendingItineraryRequest();
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setApprovingItineraryRequest(false);
+    }
+  }
+
   async function respondToReplan(accept) {
     try {
+      const promptIdToUse = incomingPromptId || session?.replanPrompt?.promptId || "";
+
+      setError("");
+      setMessage("");
+      setRespondingToIncomingReplan(true);
+
       const res = await fetch(`${API_BASE}/sessions/${code}/replan/respond`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ userId, accept }),
+        body: JSON.stringify({ userId, accept, promptId: promptIdToUse }),
       });
 
       const data = await readJsonSafely(res, "Failed to respond to replan prompt");
       if (!res.ok) throw new Error(data.error || "Failed to respond to replan prompt");
+
+      setShowIncomingReplanPopup(false);
 
       if (!accept) {
         localStorage.removeItem("sessionCode");
@@ -143,14 +227,18 @@ export default function Voting() {
         return;
       }
 
-      if (data.stage === "LOBBY") {
-        navigate(`/lobby/${code}?userId=${userId}&host=${queryHost || localStorage.getItem("host") || "0"}`);
+      if (data.stage === "SEARCH") {
+        navigate(`/search/${code}?userId=${userId}&host=${queryHost || localStorage.getItem("host") || "0"}`);
         return;
       }
 
       setMessage("You agreed to continue. Waiting for the remaining users.");
+      await loadSession();
+      await loadVotingStatus();
     } catch (e) {
       setError(e.message);
+    } finally {
+      setRespondingToIncomingReplan(false);
     }
   }
 
@@ -165,8 +253,26 @@ export default function Voting() {
   }
 
   function renderPrice(item) {
-    if (item.price === null || typeof item.price === "undefined") return "Price unavailable";
-    return `${item.currency || "GBP"} ${item.price}`;
+    const priceLevelText = String(item.priceLevelText || "").trim();
+    const isAccommodation = item?.type === "ACCOMMODATION";
+
+    if (hasActualPriceText(priceLevelText)) {
+      return priceLevelText;
+    }
+
+    if (item.price !== null && typeof item.price !== "undefined" && Number.isFinite(Number(item.price))) {
+      return `${item.currency || "GBP"} ${Number(item.price)}`;
+    }
+
+    if (isAccommodation) {
+      return "";
+    }
+
+    if (priceLevelText) {
+      return priceLevelText;
+    }
+
+    return "Price unavailable";
   }
 
   function goPreviousCandidate() {
@@ -230,6 +336,7 @@ export default function Voting() {
       await loadSession();
       await loadVotingStatus();
       await loadCandidates();
+      await loadPendingItineraryRequest();
     } catch (e) {
       setError(e.message);
     } finally {
@@ -253,13 +360,9 @@ export default function Voting() {
       const data = await readJsonSafely(res, "Failed to request next planning round");
       if (!res.ok) throw new Error(data.error || "Failed to request next planning round");
 
-      if (data.stage === "LOBBY") {
-        navigate(`/lobby/${code}?userId=${userId}&host=${queryHost || localStorage.getItem("host") || "1"}`);
-        return;
-      }
-
       setMessage("Replanning request sent. Waiting for the other users to accept.");
       await loadSession();
+      await loadVotingStatus();
     } catch (e) {
       setError(e.message);
     } finally {
@@ -278,40 +381,62 @@ export default function Voting() {
     loadSession();
     loadCandidates();
     loadVotingStatus();
+    loadPendingItineraryRequest();
   }, [code, queryUserId, queryHost]);
 
   useEffect(() => {
     const timer = setInterval(() => {
       loadSession();
       loadVotingStatus();
+      loadPendingItineraryRequest();
     }, 2000);
 
     return () => clearInterval(timer);
   }, [code, userId]);
 
   useEffect(() => {
-    if (!session || session.stage !== "REPLAN_PROMPT") {
-      hasShownReplanPromptRef.current = false;
+    if (!session || session.stage !== "REPLAN_PROMPT" || !session.replanPrompt?.active) {
+      setShowIncomingReplanPopup(false);
+      setIncomingPromptId("");
+      setIncomingPlanningType("");
+      lastSeenPromptIdRef.current = "";
       return;
     }
 
     const isHost = session.hostUserId === userId;
     const acceptedUsers = session.replanPrompt?.acceptedUserIds || [];
     const alreadyResponded = acceptedUsers.includes(userId);
+    const currentPromptId =
+      session.replanPrompt?.promptId ||
+      `${session.replanPrompt?.planningType || ""}-${session.replanPrompt?.createdAt || ""}`;
 
-    if (!isHost && !alreadyResponded && !hasShownReplanPromptRef.current) {
-      hasShownReplanPromptRef.current = true;
+    if (!currentPromptId) return;
 
-      const planningLabel =
-        session.replanPrompt?.planningType === "ACTIVITIES" ? "activities" : "accommodation";
+    if (currentPromptId !== lastSeenPromptIdRef.current) {
+      lastSeenPromptIdRef.current = currentPromptId;
 
-      const wantsToContinue = window.confirm(
-        `The host wants to plan another ${planningLabel}. Press OK to continue in the session. Press Cancel to leave the session.`
-      );
-
-      respondToReplan(wantsToContinue);
+      if (!isHost && !alreadyResponded) {
+        setIncomingPromptId(session.replanPrompt?.promptId || "");
+        setIncomingPlanningType(session.replanPrompt?.planningType || "");
+        setShowIncomingReplanPopup(true);
+      }
     }
   }, [session, userId]);
+
+  useEffect(() => {
+    if (!pendingItineraryRequest?.requestId || pendingItineraryRequest.approvals?.includes(userId)) {
+      setShowItineraryRequestPopup(false);
+      if (!pendingItineraryRequest?.requestId) {
+        lastSeenItineraryRequestIdRef.current = "";
+      }
+      return;
+    }
+
+    if (pendingItineraryRequest.requestId !== lastSeenItineraryRequestIdRef.current) {
+      lastSeenItineraryRequestIdRef.current = pendingItineraryRequest.requestId;
+      setShowItineraryRequestPopup(true);
+    }
+  }, [pendingItineraryRequest, userId]);
 
   const isResultStage = status?.stage === "RESULT" || session?.stage === "REPLAN_PROMPT";
   const isHost = session?.hostUserId === userId;
@@ -329,6 +454,8 @@ export default function Voting() {
     activeCandidate.canVote &&
     currentVote?.approval === true &&
     !activeCandidate.matchesUserFilters;
+
+  const currentUserApprovedPendingRequest = pendingItineraryRequest?.approvals?.includes(userId);
 
   return (
     <PageLayout
@@ -407,51 +534,65 @@ export default function Voting() {
             </div>
           ) : null}
 
-          {status.stage === "RESULT" || session?.stage === "REPLAN_PROMPT" ? (
-            status.winner ? (
-              <div className="card__section">
-                <h2 className="card__title">Winning option</h2>
-                <p>
-                  <strong>{status.winner.title}</strong>
-                </p>
-                {status.winner.subtitle ? <p className="inline-note">{status.winner.subtitle}</p> : null}
-                <p className="inline-note">This option has been saved to the itinerary.</p>
+          {status?.stage === "RESULT" || session?.stage === "REPLAN_PROMPT" ? (
+            <div className="card__section">
+              <h2 className="card__title">Winning option</h2>
 
-                <div className="button-row">
-                  {isHost ? (
-                    <>
-                      <button
-                        type="button"
-                        className="button button--secondary"
-                        onClick={() => {
-                          setNextPlanningType("ACCOMMODATION");
-                          setShowReplanPrompt(true);
-                        }}
-                        disabled={requestingReplan}
-                      >
-                        Plan Another Accommodation
-                      </button>
+              {status?.winner ? (
+                <>
+                  {status.winner.image ? (
+                    <img
+                      src={status.winner.image}
+                      alt={status.winner.title}
+                      className="option-card__image"
+                      style={{ marginBottom: 12 }}
+                    />
+                  ) : null}
 
-                      <button
-                        type="button"
-                        className="button button--secondary"
-                        onClick={() => {
-                          setNextPlanningType("ACTIVITIES");
-                          setShowReplanPrompt(true);
-                        }}
-                        disabled={requestingReplan}
-                      >
-                        Plan Activities
-                      </button>
-                    </>
-                  ) : session?.stage === "REPLAN_PROMPT" ? (
-                    <span className="inline-note">Waiting for all remaining users to respond.</span>
-                  ) : (
-                    <span className="inline-note">Only the host can start the next planning round.</span>
-                  )}
-                </div>
+                  <p>
+                    <strong>{status.winner.title}</strong>
+                  </p>
+                  {status.winner.subtitle ? <p className="inline-note">{status.winner.subtitle}</p> : null}
+                  <p className="inline-note">This option has been saved to the itinerary.</p>
+                </>
+              ) : (
+                <p className="inline-note">Final result is being loaded.</p>
+              )}
+
+              <div className="button-row" style={{ marginTop: 12 }}>
+                {isHost ? (
+                  <>
+                    <button
+                      type="button"
+                      className="button button--secondary"
+                      onClick={() => {
+                        setNextPlanningType("ACCOMMODATION");
+                        setShowReplanPrompt(true);
+                      }}
+                      disabled={requestingReplan}
+                    >
+                      Plan Another Accommodation
+                    </button>
+
+                    <button
+                      type="button"
+                      className="button button--secondary"
+                      onClick={() => {
+                        setNextPlanningType("ACTIVITIES");
+                        setShowReplanPrompt(true);
+                      }}
+                      disabled={requestingReplan}
+                    >
+                      Plan Activities
+                    </button>
+                  </>
+                ) : session?.stage === "REPLAN_PROMPT" ? (
+                  <span className="inline-note">Waiting for all remaining users to respond.</span>
+                ) : (
+                  <span className="inline-note">Only the host can start the next planning round.</span>
+                )}
               </div>
-            ) : null
+            </div>
           ) : null}
         </div>
       ) : null}
@@ -460,16 +601,26 @@ export default function Voting() {
         candidates.length === 0 ? (
           <div className="empty-state">Loading candidates...</div>
         ) : activeCandidate ? (
-          <div className="vote-focus-layout">
-            <button
-              type="button"
-              className="vote-nav-arrow"
-              onClick={goPreviousCandidate}
-              disabled={activeCandidateIndex === 0}
-              aria-label="Previous option"
-            >
-              ←
-            </button>
+          <div className="vote-focus-stack">
+            <div className="button-row vote-inline-nav">
+              <button
+                type="button"
+                className="button button--secondary"
+                onClick={goPreviousCandidate}
+                disabled={activeCandidateIndex === 0}
+              >
+                ← Previous
+              </button>
+
+              <button
+                type="button"
+                className="button button--secondary"
+                onClick={goNextCandidate}
+                disabled={activeCandidateIndex === candidates.length - 1}
+              >
+                Next →
+              </button>
+            </div>
 
             <div className="option-card vote-focus-card">
               {activeCandidate.image ? (
@@ -484,7 +635,12 @@ export default function Voting() {
                   <span className="badge">
                     {activeCandidateIndex + 1} / {candidates.length}
                   </span>
-                  {!activeCandidate.canVote ? <span className="badge badge--warning">Your own submission</span> : null}
+                  {!activeCandidate.canVote && !activeCandidate.sharedSubmission ? (
+                    <span className="badge badge--warning">Your own submission</span>
+                  ) : null}
+                  {activeCandidate.sharedSubmission ? (
+                    <span className="badge badge--success">Shared submission</span>
+                  ) : null}
                 </div>
 
                 <h3 className="option-card__title">{activeCandidate.title}</h3>
@@ -493,14 +649,16 @@ export default function Voting() {
 
               <div className="option-card__meta">
                 <span className="badge">Rating: {activeCandidate.rating ?? "Unavailable"}</span>
-                <span className="badge">Price: {renderPrice(activeCandidate)}</span>
+                {renderPrice(activeCandidate) ? (
+                  <span className="badge">Price: {renderPrice(activeCandidate)}</span>
+                ) : null}
               </div>
 
               {activeCandidate.tags?.length ? (
                 <div className="badge-row">
                   {activeCandidate.tags.map((tag) => (
                     <span key={tag} className="badge">
-                      {tag}
+                      {formatTagLabel(tag)}
                     </span>
                   ))}
                 </div>
@@ -510,6 +668,12 @@ export default function Voting() {
                 <a href={activeCandidate.link} target="_blank" rel="noreferrer" className="inline-note">
                   View source
                 </a>
+              ) : null}
+
+              {activeCandidate.sharedSubmissionMessage ? (
+                <div className="alert alert--success">
+                  {activeCandidate.sharedSubmissionMessage}
+                </div>
               ) : null}
 
               {!activeCandidate.canVote ? (
@@ -586,39 +750,31 @@ export default function Voting() {
               )}
             </div>
 
-            <button
-              type="button"
-              className="vote-nav-arrow"
-              onClick={goNextCandidate}
-              disabled={activeCandidateIndex === candidates.length - 1}
-              aria-label="Next option"
-            >
-              →
-            </button>
+            <div className="button-row vote-inline-nav">
+              <button
+                type="button"
+                className="button button--secondary"
+                onClick={goPreviousCandidate}
+                disabled={activeCandidateIndex === 0}
+              >
+                ← Previous
+              </button>
+
+              <button
+                type="button"
+                className="button button--secondary"
+                onClick={goNextCandidate}
+                disabled={activeCandidateIndex === candidates.length - 1}
+              >
+                Next →
+              </button>
+            </div>
           </div>
         ) : null
       ) : null}
 
       {!isResultStage ? (
         <div className="button-row" style={{ marginTop: 20 }}>
-          <button
-            type="button"
-            className="button button--secondary"
-            onClick={goPreviousCandidate}
-            disabled={activeCandidateIndex === 0}
-          >
-            Previous
-          </button>
-
-          <button
-            type="button"
-            className="button button--secondary"
-            onClick={goNextCandidate}
-            disabled={activeCandidateIndex === candidates.length - 1}
-          >
-            Next
-          </button>
-
           <button
             type="button"
             className="button button--primary"
@@ -654,6 +810,37 @@ export default function Voting() {
         onConfirm={() => requestReplan(nextPlanningType)}
         onCancel={() => setShowReplanPrompt(false)}
         loading={requestingReplan}
+      />
+
+      <ConfirmPopup
+        isOpen={showItineraryRequestPopup && Boolean(pendingItineraryRequest) && !currentUserApprovedPendingRequest}
+        title="Approve removal request?"
+        message={
+          pendingItineraryRequest?.itineraryItemTitle
+            ? `Approve removing "${pendingItineraryRequest.itineraryItemTitle}" from the itinerary?`
+            : "Approve this itinerary removal request?"
+        }
+        confirmText="Approve Request"
+        cancelText="Not Now"
+        isDanger
+        onConfirm={approvePendingItineraryRequest}
+        onCancel={() => setShowItineraryRequestPopup(false)}
+        loading={approvingItineraryRequest}
+      />
+
+      <ConfirmPopup
+        isOpen={showIncomingReplanPopup}
+        title="Continue into the next round?"
+        message={
+          incomingPlanningType === "ACTIVITIES"
+            ? "The host wants to start a new activities round. Choose Continue to join the next round, or Leave Session if you do not want to take part."
+            : "The host wants to start a new accommodation round. Choose Continue to join the next round, or Leave Session if you do not want to take part."
+        }
+        confirmText="Continue"
+        cancelText="Leave Session"
+        onConfirm={() => respondToReplan(true)}
+        onCancel={() => respondToReplan(false)}
+        loading={respondingToIncomingReplan}
       />
 
       <ItineraryPopup

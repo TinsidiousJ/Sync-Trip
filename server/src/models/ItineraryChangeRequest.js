@@ -17,12 +17,16 @@ const itineraryChangeRequestSchema = new mongoose.Schema(
     },
 
     requestedByUserId: { type: String, required: true },
-    approvals: { type: [String], default: [] },
+
+    approvals: {
+      type: [String],
+      default: [],
+    },
 
     moveDirection: {
       type: String,
-      enum: ["UP", "DOWN", null],
-      default: null,
+      enum: ["UP", "DOWN", ""],
+      default: "",
     },
 
     status: {

@@ -23,6 +23,7 @@ export default function CreateSession() {
   const [selectedDestination, setSelectedDestination] = useState(null);
 
   const debounceRef = useRef(null);
+  const suggestionRequestRef = useRef(0);
   const suggestionBoxRef = useRef(null);
 
   const canCreate = useMemo(() => {
@@ -46,18 +47,24 @@ export default function CreateSession() {
   }
 
   async function fetchDestinationSuggestions(searchText) {
-    if (!searchText || searchText.trim().length < 2) {
+    const trimmedSearchText = String(searchText || "").trim();
+    const requestId = suggestionRequestRef.current + 1;
+    suggestionRequestRef.current = requestId;
+
+    if (trimmedSearchText.length < 1) {
       setDestinationSuggestions([]);
       setShowSuggestions(false);
+      setLoadingSuggestions(false);
       return;
     }
 
     try {
       setLoadingSuggestions(true);
+      setShowSuggestions(true);
       setError("");
 
       const res = await fetch(
-        `${API_BASE}/locations/destinations?text=${encodeURIComponent(searchText.trim())}`
+        `${API_BASE}/locations/destinations?text=${encodeURIComponent(trimmedSearchText)}`
       );
       const data = await readJsonSafely(res, "Failed to load destination suggestions");
 
@@ -65,15 +72,21 @@ export default function CreateSession() {
         throw new Error(data.error || "Failed to load destination suggestions");
       }
 
+      if (requestId !== suggestionRequestRef.current) return;
+
       const nextSuggestions = Array.isArray(data.results) ? data.results : [];
       setDestinationSuggestions(nextSuggestions);
       setShowSuggestions(true);
     } catch (e) {
+      if (requestId !== suggestionRequestRef.current) return;
+
       setDestinationSuggestions([]);
       setShowSuggestions(false);
       setError(e.message);
     } finally {
-      setLoadingSuggestions(false);
+      if (requestId === suggestionRequestRef.current) {
+        setLoadingSuggestions(false);
+      }
     }
   }
 
@@ -87,9 +100,13 @@ export default function CreateSession() {
       clearTimeout(debounceRef.current);
     }
 
+    if (value.trim().length > 0) {
+      setShowSuggestions(true);
+    }
+
     debounceRef.current = setTimeout(() => {
       fetchDestinationSuggestions(value);
-    }, 250);
+    }, 150);
   }
 
   function handleSuggestionSelect(item) {
@@ -214,8 +231,11 @@ export default function CreateSession() {
                 value={destination}
                 onChange={(e) => handleDestinationChange(e.target.value)}
                 onFocus={() => {
-                  if (destinationSuggestions.length > 0) {
+                  if (destinationSuggestions.length > 0 || destination.trim().length > 0) {
                     setShowSuggestions(true);
+                  }
+                  if (destination.trim().length > 0 && destinationSuggestions.length === 0) {
+                    fetchDestinationSuggestions(destination);
                   }
                 }}
                 placeholder="Start typing a city or country"
@@ -256,7 +276,7 @@ export default function CreateSession() {
 
               {!loadingSuggestions &&
               showSuggestions &&
-              destination.trim().length >= 2 &&
+              destination.trim().length >= 1 &&
               destinationSuggestions.length === 0 ? (
                 <div className="suggestion-dropdown">
                   <button type="button" className="suggestion-item suggestion-item--static">

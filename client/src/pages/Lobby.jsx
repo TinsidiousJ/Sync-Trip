@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import PageLayout from "../components/PageLayout.jsx";
 import ConfirmPopup from "../components/ConfirmPopup.jsx";
+import ItineraryPopup from "../components/ItineraryPopup.jsx";
 
 const API_BASE = "http://localhost:4000";
 
@@ -23,6 +24,14 @@ const TAGS_ACTIVITIES = [
   "NATURAL",
 ];
 
+function formatTagLabel(tag) {
+  return String(tag || "")
+    .toLowerCase()
+    .split("_")
+    .map((part) => (part ? part.charAt(0).toUpperCase() + part.slice(1) : ""))
+    .join(" ");
+}
+
 export default function Lobby() {
   const navigate = useNavigate();
   const { code } = useParams();
@@ -43,13 +52,12 @@ export default function Lobby() {
   const [session, setSession] = useState(null);
   const [error, setError] = useState("");
 
-  const [budgetMin, setBudgetMin] = useState("");
-  const [budgetMax, setBudgetMax] = useState("");
   const [minRating, setMinRating] = useState("");
   const [selectedTags, setSelectedTags] = useState([]);
   const [didLoadMyFilters, setDidLoadMyFilters] = useState(false);
 
   const [showStartPrompt, setShowStartPrompt] = useState(false);
+  const [showItineraryPopup, setShowItineraryPopup] = useState(false);
   const [starting, setStarting] = useState(false);
 
   const tagOptions = useMemo(() => {
@@ -57,12 +65,29 @@ export default function Lobby() {
     return TAGS_ACCOMMODATION;
   }, [session?.planningType]);
 
+  const canViewItinerary = useMemo(() => {
+    return Boolean(
+      session &&
+        ["SEARCH", "VOTING", "RESULT", "REPLAN_PROMPT", "LOBBY"].includes(session.stage)
+    );
+  }, [session]);
+
+  async function readJsonSafely(res, fallbackMessage) {
+    const text = await res.text();
+
+    try {
+      return JSON.parse(text);
+    } catch {
+      throw new Error(fallbackMessage);
+    }
+  }
+
   async function loadLobby({ initialiseMyFilters = false } = {}) {
     try {
       setError("");
 
       const res = await fetch(`${API_BASE}/sessions/${code}/lobby`);
-      const data = await res.json();
+      const data = await readJsonSafely(res, "Failed to load lobby");
 
       if (!res.ok) throw new Error(data.error || "Failed to load lobby");
 
@@ -88,16 +113,6 @@ export default function Lobby() {
         const myFilters = me?.filters;
 
         if (myFilters) {
-          setBudgetMin(
-            myFilters.budgetMin === null || typeof myFilters.budgetMin === "undefined"
-              ? ""
-              : String(myFilters.budgetMin)
-          );
-          setBudgetMax(
-            myFilters.budgetMax === null || typeof myFilters.budgetMax === "undefined"
-              ? ""
-              : String(myFilters.budgetMax)
-          );
           setMinRating(
             myFilters.minRating === null || typeof myFilters.minRating === "undefined"
               ? ""
@@ -113,10 +128,8 @@ export default function Lobby() {
     }
   }
 
-  function buildCurrentFilters(nextTags = selectedTags, nextBudgetMin = budgetMin, nextBudgetMax = budgetMax, nextMinRating = minRating) {
+  function buildCurrentFilters(nextTags = selectedTags, nextMinRating = minRating) {
     return {
-      budgetMin: nextBudgetMin === "" ? null : Number(nextBudgetMin),
-      budgetMax: nextBudgetMax === "" ? null : Number(nextBudgetMax),
       minRating: nextMinRating === "" ? null : Number(nextMinRating),
       tags: nextTags,
     };
@@ -132,7 +145,7 @@ export default function Lobby() {
         body: JSON.stringify({ userId, filters: nextFilters }),
       });
 
-      const data = await res.json();
+      const data = await readJsonSafely(res, "Failed to save filters");
       if (!res.ok) throw new Error(data.error || "Failed to save filters");
     } catch (e) {
       setError(e.message);
@@ -145,24 +158,14 @@ export default function Lobby() {
         ? currentTags.filter((currentTag) => currentTag !== tag)
         : [...currentTags, tag];
 
-      saveFilters(buildCurrentFilters(nextTags));
+      saveFilters(buildCurrentFilters(nextTags, minRating));
       return nextTags;
     });
   }
 
-  function handleBudgetMinChange(value) {
-    setBudgetMin(value);
-    saveFilters(buildCurrentFilters(selectedTags, value, budgetMax, minRating));
-  }
-
-  function handleBudgetMaxChange(value) {
-    setBudgetMax(value);
-    saveFilters(buildCurrentFilters(selectedTags, budgetMin, value, minRating));
-  }
-
   function handleMinRatingChange(value) {
     setMinRating(value);
-    saveFilters(buildCurrentFilters(selectedTags, budgetMin, budgetMax, value));
+    saveFilters(buildCurrentFilters(selectedTags, value));
   }
 
   async function startSession() {
@@ -176,7 +179,7 @@ export default function Lobby() {
         body: JSON.stringify({ userId }),
       });
 
-      const data = await res.json();
+      const data = await readJsonSafely(res, "Failed to start session");
       if (!res.ok) throw new Error(data.error || "Failed to start session");
 
       navigate(`/search/${code}?userId=${userId}&host=1`);
@@ -199,7 +202,7 @@ export default function Lobby() {
 
     const timer = setInterval(() => loadLobby(), 2000);
     return () => clearInterval(timer);
-  }, [code]);
+  }, [code, queryUserId, queryHost]);
 
   useEffect(() => {
     if (!userId) return;
@@ -211,11 +214,23 @@ export default function Lobby() {
       pageTitle="Lobby"
       pageSubtitle="Review the group, set your filters, and wait for the host to begin the next stage."
       headerAction={
-        isHost ? (
-          <button type="button" className="button button--primary" onClick={() => setShowStartPrompt(true)}>
-            Start Session
-          </button>
-        ) : null
+        <div className="button-row">
+          {canViewItinerary ? (
+            <button
+              type="button"
+              className="button button--secondary"
+              onClick={() => setShowItineraryPopup(true)}
+            >
+              View Itinerary
+            </button>
+          ) : null}
+
+          {isHost ? (
+            <button type="button" className="button button--primary" onClick={() => setShowStartPrompt(true)}>
+              Start Session
+            </button>
+          ) : null}
+        </div>
       }
     >
       {error ? <div className="alert alert--error" style={{ marginBottom: 20 }}>{error}</div> : null}
@@ -255,28 +270,6 @@ export default function Lobby() {
             <h2 className="card__title">Your filters</h2>
 
             <div className="form-grid">
-              <div className="form-grid form-grid--2">
-                <div className="field">
-                  <label className="field__label">Budget min</label>
-                  <input
-                    className="input"
-                    value={budgetMin}
-                    onChange={(e) => handleBudgetMinChange(e.target.value)}
-                    placeholder="e.g. 50"
-                  />
-                </div>
-
-                <div className="field">
-                  <label className="field__label">Budget max</label>
-                  <input
-                    className="input"
-                    value={budgetMax}
-                    onChange={(e) => handleBudgetMaxChange(e.target.value)}
-                    placeholder="e.g. 200"
-                  />
-                </div>
-              </div>
-
               <div className="field">
                 <label className="field__label">Minimum rating</label>
                 <select className="select" value={minRating} onChange={(e) => handleMinRatingChange(e.target.value)}>
@@ -301,7 +294,7 @@ export default function Lobby() {
                         checked={selectedTags.includes(tag)}
                         onChange={() => toggleTag(tag)}
                       />
-                      <span>{tag}</span>
+                      <span>{formatTagLabel(tag)}</span>
                     </label>
                   ))}
                 </div>
@@ -343,6 +336,12 @@ export default function Lobby() {
         onConfirm={startSession}
         onCancel={() => setShowStartPrompt(false)}
         loading={starting}
+      />
+
+      <ItineraryPopup
+        isOpen={showItineraryPopup}
+        sessionCode={code}
+        onClose={() => setShowItineraryPopup(false)}
       />
     </PageLayout>
   );

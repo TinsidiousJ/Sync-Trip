@@ -17,6 +17,7 @@ const optionSchema = new mongoose.Schema(
     subtitle: { type: String, default: "" },
 
     price: { type: Number, default: null },
+    priceLevelText: { type: String, default: "" },
     currency: { type: String, default: "GBP" },
 
     rating: { type: Number, default: null },

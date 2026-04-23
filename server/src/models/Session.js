@@ -32,6 +32,7 @@ const sessionSchema = new mongoose.Schema(
 
     replanPrompt: {
       active: { type: Boolean, default: false },
+      promptId: { type: String, default: "" },
       requestedByUserId: { type: String, default: "" },
       planningType: {
         type: String,
@@ -40,6 +41,7 @@ const sessionSchema = new mongoose.Schema(
       },
       acceptedUserIds: { type: [String], default: [] },
       declinedUserIds: { type: [String], default: [] },
+      createdAt: { type: Date, default: null },
     },
   },
   { timestamps: true }

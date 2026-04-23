@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from "react";
+import { useNavigate } from "react-router-dom";
 
 const API_BASE = "http://localhost:4000";
 
@@ -31,14 +32,48 @@ function renderSchedule(item) {
 }
 
 function renderPrice(item) {
-  if (item.price === null || typeof item.price === "undefined") return "Price unavailable";
-  return `${item.currency || "GBP"} ${item.price}`;
+  const priceLevelText = String(item.priceLevelText || "").trim();
+  const isAccommodation = item?.type === "ACCOMMODATION";
+
+  if (hasActualPriceText(priceLevelText)) {
+    return priceLevelText;
+  }
+
+  if (item.price !== null && typeof item.price !== "undefined" && Number.isFinite(Number(item.price))) {
+    return `${item.currency || "GBP"} ${Number(item.price)}`;
+  }
+
+  if (isAccommodation) {
+    return "";
+  }
+
+  if (priceLevelText) {
+    return priceLevelText;
+  }
+
+  return "Price unavailable";
+}
+
+function hasActualPriceText(value) {
+  return /\d/.test(String(value || ""));
+}
+
+function formatTagLabel(tag) {
+  return String(tag || "")
+    .toLowerCase()
+    .split("_")
+    .map((part) => (part ? part.charAt(0).toUpperCase() + part.slice(1) : ""))
+    .join(" ");
 }
 
 export default function ItineraryPopup({ isOpen, sessionCode, onClose }) {
+  const navigate = useNavigate();
   const [loading, setLoading] = useState(false);
   const [itinerary, setItinerary] = useState(null);
   const [error, setError] = useState("");
+
+  const userId = localStorage.getItem("userId") || "";
+  const host = localStorage.getItem("host") || "0";
 
   async function loadItinerary() {
     if (!sessionCode) return;
@@ -58,6 +93,11 @@ export default function ItineraryPopup({ isOpen, sessionCode, onClose }) {
     } finally {
       setLoading(false);
     }
+  }
+
+  function openFullItineraryPage() {
+    onClose?.();
+    navigate(`/itinerary/${sessionCode}?userId=${userId}&host=${host}`);
   }
 
   useEffect(() => {
@@ -86,6 +126,7 @@ export default function ItineraryPopup({ isOpen, sessionCode, onClose }) {
             alignItems: "flex-start",
             gap: 16,
             marginBottom: 16,
+            flexWrap: "wrap",
           }}
         >
           <div>
@@ -99,9 +140,21 @@ export default function ItineraryPopup({ isOpen, sessionCode, onClose }) {
             ) : null}
           </div>
 
-          <button type="button" className="button button--secondary" onClick={onClose}>
-            Close
-          </button>
+          <div className="button-row">
+            <button type="button" className="button button--secondary" onClick={loadItinerary}>
+              Refresh
+            </button>
+            <button type="button" className="button button--primary" onClick={openFullItineraryPage}>
+              Open Full Itinerary
+            </button>
+            <button type="button" className="button button--secondary" onClick={onClose}>
+              Close
+            </button>
+          </div>
+        </div>
+
+        <div className="alert alert--warning" style={{ marginBottom: 16 }}>
+          To add dates and times, request removals, or reorder activities, use <strong>Open Full Itinerary</strong>.
         </div>
 
         {loading ? <div className="alert">Loading itinerary...</div> : null}
@@ -135,14 +188,14 @@ export default function ItineraryPopup({ isOpen, sessionCode, onClose }) {
 
                   <div className="option-card__meta">
                     <span className="badge">Rating: {item.rating ?? "Unavailable"}</span>
-                    <span className="badge">Price: {renderPrice(item)}</span>
+                    {renderPrice(item) ? <span className="badge">Price: {renderPrice(item)}</span> : null}
                   </div>
 
                   {item.tags?.length ? (
                     <div className="badge-row">
                       {item.tags.map((tag) => (
                         <span key={tag} className="badge">
-                          {tag}
+                          {formatTagLabel(tag)}
                         </span>
                       ))}
                     </div>

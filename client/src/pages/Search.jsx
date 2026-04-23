@@ -25,6 +25,18 @@ const ACTIVITY_TAGS = [
   "NATURAL",
 ];
 
+function formatTagLabel(tag) {
+  return String(tag || "")
+    .toLowerCase()
+    .split("_")
+    .map((part) => (part ? part.charAt(0).toUpperCase() + part.slice(1) : ""))
+    .join(" ");
+}
+
+function hasActualPriceText(value) {
+  return /\d/.test(String(value || ""));
+}
+
 export default function Search() {
   const navigate = useNavigate();
   const { code } = useParams();
@@ -47,8 +59,6 @@ export default function Search() {
   const [showSubmitPrompt, setShowSubmitPrompt] = useState(false);
   const [showItineraryPopup, setShowItineraryPopup] = useState(false);
 
-  const [budgetMin, setBudgetMin] = useState("");
-  const [budgetMax, setBudgetMax] = useState("");
   const [minRating, setMinRating] = useState("");
   const [selectedTags, setSelectedTags] = useState([]);
   const [didLoadMyFilters, setDidLoadMyFilters] = useState(false);
@@ -66,6 +76,13 @@ export default function Search() {
     if (session?.planningType === "ACTIVITIES") return ACTIVITY_TAGS;
     return ACCOMMODATION_TAGS;
   }, [session?.planningType]);
+
+  const canViewItinerary = useMemo(() => {
+    return Boolean(
+      session &&
+        ["SEARCH", "VOTING", "RESULT", "REPLAN_PROMPT"].includes(session.stage)
+    );
+  }, [session]);
 
   async function readJsonSafely(res, fallbackMessage) {
     const text = await res.text();
@@ -104,27 +121,20 @@ export default function Search() {
       setSession(data.session || null);
       setUsers(data.users || []);
 
-      if ((initialiseMyFilters || !didLoadMyFilters) && userId) {
+      if (initialiseMyFilters && userId) {
         const me = (data.users || []).find((user) => user.userId === userId);
         const myFilters = me?.filters;
 
         if (myFilters) {
-          setBudgetMin(
-            myFilters.budgetMin === null || typeof myFilters.budgetMin === "undefined"
-              ? ""
-              : String(myFilters.budgetMin)
-          );
-          setBudgetMax(
-            myFilters.budgetMax === null || typeof myFilters.budgetMax === "undefined"
-              ? ""
-              : String(myFilters.budgetMax)
-          );
           setMinRating(
             myFilters.minRating === null || typeof myFilters.minRating === "undefined"
               ? ""
               : String(myFilters.minRating)
           );
           setSelectedTags(Array.isArray(myFilters.tags) ? myFilters.tags : []);
+        } else {
+          setMinRating("");
+          setSelectedTags([]);
         }
 
         setDidLoadMyFilters(true);
@@ -138,8 +148,6 @@ export default function Search() {
 
   function buildCurrentFilters(overrides = {}) {
     return {
-      budgetMin: budgetMin === "" ? null : Number(budgetMin),
-      budgetMax: budgetMax === "" ? null : Number(budgetMax),
       minRating: minRating === "" ? null : Number(minRating),
       tags: selectedTags,
       ...overrides,
@@ -183,7 +191,11 @@ export default function Search() {
 
       if (!res.ok) throw new Error(data.error || "Failed to fetch search results");
 
-      setResults(data.results || []);
+      const onlyMatching = Array.isArray(data.results)
+        ? data.results.filter((item) => item.matchesFilters)
+        : [];
+
+      setResults(onlyMatching);
     } catch (e) {
       setError(e.message);
     } finally {
@@ -241,7 +253,9 @@ export default function Search() {
       if (!res.ok) throw new Error(data.error || "Failed to submit choice");
 
       if (data.skippedVoting && data.winner) {
-        setMessage(`Everyone submitted the same option, so voting was skipped and "${data.winner.title}" was selected automatically.`);
+        setMessage(
+          `Everyone submitted the same option, so voting was skipped and "${data.winner.title}" was selected automatically.`
+        );
       } else {
         setMessage("Choice submitted to the anonymous pool.");
       }
@@ -263,18 +277,27 @@ export default function Search() {
     );
   }
 
-function renderPrice(item) {
-  if (item.price !== null && typeof item.price !== "undefined" && Number.isFinite(Number(item.price))) {
-    return `${item.currency || "GBP"} ${Number(item.price)}`;
-  }
+  function renderPrice(item) {
+    const priceLevelText = String(item.priceLevelText || "").trim();
+    const isAccommodation = session?.planningType === "ACCOMMODATION" || item?.type === "ACCOMMODATION";
 
-  return "Price unavailable";
-}
+    if (hasActualPriceText(priceLevelText)) {
+      return priceLevelText;
+    }
 
-  function getPriceBadgeClass(item) {
-    const hasAnyBudget = budgetMin !== "" || budgetMax !== "";
-    if (!hasAnyBudget) return "badge";
-    return item.budgetOk ? "badge badge--success" : "badge";
+    if (item.price !== null && typeof item.price !== "undefined" && Number.isFinite(Number(item.price))) {
+      return `${item.currency || "GBP"} ${Number(item.price)}`;
+    }
+
+    if (isAccommodation) {
+      return "";
+    }
+
+    if (priceLevelText) {
+      return priceLevelText;
+    }
+
+    return "Price unavailable";
   }
 
   function getRatingBadgeClass(item) {
@@ -288,12 +311,10 @@ function renderPrice(item) {
 
   const activeFilterCount = useMemo(() => {
     let count = 0;
-    if (budgetMin !== "") count += 1;
-    if (budgetMax !== "") count += 1;
     if (minRating !== "") count += 1;
     if (selectedTags.length > 0) count += selectedTags.length;
     return count;
-  }, [budgetMin, budgetMax, minRating, selectedTags]);
+  }, [minRating, selectedTags]);
 
   useEffect(() => {
     if (!code) return;
@@ -314,6 +335,7 @@ function renderPrice(item) {
   useEffect(() => {
     const timer = setInterval(() => {
       loadSubmissionStatus();
+      loadSession();
     }, 2000);
 
     return () => clearInterval(timer);
@@ -322,14 +344,16 @@ function renderPrice(item) {
   return (
     <PageLayout
       pageTitle="Search and select"
-      pageSubtitle="Refresh results, review your filters, and submit one choice to the anonymous group pool."
+      pageSubtitle="Review your filtered results and submit one choice to the anonymous group pool."
       headerAction={
-        <button type="button" className="button button--secondary" onClick={() => setShowItineraryPopup(true)}>
-          View Itinerary
-        </button>
+        canViewItinerary ? (
+          <button type="button" className="button button--secondary" onClick={() => setShowItineraryPopup(true)}>
+            View Itinerary
+          </button>
+        ) : null
       }
     >
-      {loadingSession ? <div className="alert">Loading session...</div> : null}
+      {loadingSession && !session ? <div className="alert">Loading session...</div> : null}
       {error ? <div className="alert alert--error" style={{ marginBottom: 20 }}>{error}</div> : null}
       {message ? <div className="alert alert--warning" style={{ marginBottom: 20 }}>{message}</div> : null}
 
@@ -412,28 +436,6 @@ function renderPrice(item) {
               {showFilters ? (
                 <div className="filter-dropdown-panel">
                   <div className="form-grid">
-                    <div className="form-grid form-grid--2">
-                      <div className="field">
-                        <label className="field__label">Budget min</label>
-                        <input
-                          className="input"
-                          value={budgetMin}
-                          onChange={(e) => setBudgetMin(e.target.value)}
-                          placeholder="e.g. 50"
-                        />
-                      </div>
-
-                      <div className="field">
-                        <label className="field__label">Budget max</label>
-                        <input
-                          className="input"
-                          value={budgetMax}
-                          onChange={(e) => setBudgetMax(e.target.value)}
-                          placeholder="e.g. 200"
-                        />
-                      </div>
-                    </div>
-
                     <div className="field">
                       <label className="field__label">Minimum rating</label>
                       <select className="select" value={minRating} onChange={(e) => setMinRating(e.target.value)}>
@@ -458,7 +460,7 @@ function renderPrice(item) {
                               checked={selectedTags.includes(tag)}
                               onChange={() => toggleTag(tag)}
                             />
-                            <span>{tag}</span>
+                            <span>{formatTagLabel(tag)}</span>
                           </label>
                         ))}
                       </div>
@@ -510,7 +512,9 @@ function renderPrice(item) {
 
                     <div className="badge-row">
                       <span className="badge badge--primary">Selected</span>
-                      <span className="badge">{renderPrice(selectedChoice)}</span>
+                      {renderPrice(selectedChoice) ? (
+                        <span className="badge">{renderPrice(selectedChoice)}</span>
+                      ) : null}
                     </div>
                   </div>
                 )}
@@ -522,7 +526,9 @@ function renderPrice(item) {
             <h2 className="card__title">Search results</h2>
 
             {loadingResults ? <div className="alert">Loading results...</div> : null}
-            {!loadingResults && results.length === 0 ? <div className="empty-state">No results found.</div> : null}
+            {!loadingResults && results.length === 0 ? (
+              <div className="empty-state">No results matched your current filters.</div>
+            ) : null}
 
             <div className="option-grid">
               {results.map((item) => {
@@ -543,16 +549,14 @@ function renderPrice(item) {
 
                     <div className="option-card__meta">
                       <span className={getRatingBadgeClass(item)}>Rating: {item.rating ?? "Unavailable"}</span>
-                      {item.price !== null && typeof item.price !== "undefined" ? (
-                        <span className={getPriceBadgeClass(item)}>Price: {renderPrice(item)}</span>
-                      ) : null}
+                      {renderPrice(item) ? <span className="badge">Price: {renderPrice(item)}</span> : null}
                     </div>
 
                     {item.tags?.length ? (
                       <div className="badge-row">
                         {item.tags.map((tag) => (
                           <span key={tag} className={getTagBadgeClass(tag)}>
-                            {tag}
+                            {formatTagLabel(tag)}
                           </span>
                         ))}
                       </div>

@@ -15,6 +15,7 @@ const itineraryItemSchema = new mongoose.Schema(
     subtitle: { type: String, default: "" },
 
     price: { type: Number, default: null },
+    priceLevelText: { type: String, default: "" },
     currency: { type: String, default: "GBP" },
 
     rating: { type: Number, default: null },
@@ -28,8 +29,8 @@ const itineraryItemSchema = new mongoose.Schema(
 
     orderIndex: { type: Number, required: true },
 
-    scheduledDate: { type: String, default: "" }, // YYYY-MM-DD
-    scheduledTime: { type: String, default: "" }, // HH:MM
+    scheduledDate: { type: String, default: "" },
+    scheduledTime: { type: String, default: "" },
   },
   { timestamps: true }
 );

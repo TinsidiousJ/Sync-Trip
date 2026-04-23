@@ -617,6 +617,19 @@ img {
   transition: 0.2s ease;
 }
 
+.vote-focus-stack {
+  display: grid;
+  gap: 16px;
+}
+
+.vote-inline-nav {
+  justify-content: space-between;
+}
+
+.vote-inline-nav .button {
+  min-width: 140px;
+}
+
 .vote-nav-arrow:hover:not(:disabled) {
   background: #f8fbff;
 }

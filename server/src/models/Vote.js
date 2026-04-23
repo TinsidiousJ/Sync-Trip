@@ -17,6 +17,12 @@ const voteSchema = new mongoose.Schema(
     },
 
     acknowledgedFilterViolation: { type: Boolean, default: false },
+
+    submittedAt: {
+      type: Date,
+      default: Date.now,
+      index: true,
+    },
   },
   { timestamps: true }
 );
