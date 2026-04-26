@@ -18,6 +18,7 @@ function hasActualPriceText(value) {
   return /\d/.test(String(value || ""));
 }
 
+// voting page
 export default function Voting() {
   const navigate = useNavigate();
   const { code } = useParams();
@@ -65,6 +66,7 @@ export default function Voting() {
     }
   }
 
+  // keep session incase of refresh
   async function loadSession() {
     try {
       const res = await fetch(`${API_BASE}/sessions/${code}/lobby`);
@@ -88,6 +90,7 @@ export default function Voting() {
     }
   }
 
+  // load the cards
   async function loadCandidates() {
     try {
       const res = await fetch(`${API_BASE}/sessions/${code}/voting/candidates?userId=${encodeURIComponent(userId)}`);
@@ -139,6 +142,7 @@ export default function Voting() {
     }
   }
 
+  // load group progress and the winner
   async function loadVotingStatus() {
     try {
       const res = await fetch(`${API_BASE}/sessions/${code}/voting-status?userId=${encodeURIComponent(userId)}`);
@@ -152,6 +156,7 @@ export default function Voting() {
     }
   }
 
+  // check for itinerary changes
   async function loadPendingItineraryRequest() {
     try {
       const res = await fetch(`${API_BASE}/sessions/${code}/itinerary`);
@@ -165,6 +170,7 @@ export default function Voting() {
     }
   }
 
+  // approve itinerary request from voting screen
   async function approvePendingItineraryRequest() {
     if (!pendingItineraryRequest?.requestId) return;
 
@@ -252,6 +258,7 @@ export default function Voting() {
     }));
   }
 
+  // hide accommodation prices
   function renderPrice(item) {
     const priceLevelText = String(item.priceLevelText || "").trim();
     const isAccommodation = item?.type === "ACCOMMODATION";
@@ -283,6 +290,7 @@ export default function Voting() {
     setActiveCandidateIndex((currentIndex) => Math.min(currentIndex + 1, candidates.length - 1));
   }
 
+  // validate and save votes
   async function submitVotes() {
     try {
       setError("");
@@ -345,6 +353,7 @@ export default function Voting() {
     }
   }
 
+  // host request replan
   async function requestReplan(planningType) {
     try {
       setError("");
@@ -373,7 +382,6 @@ export default function Voting() {
 
   useEffect(() => {
     if (!code) return;
-
     localStorage.setItem("sessionCode", code);
     if (queryUserId) localStorage.setItem("userId", queryUserId);
     if (queryHost) localStorage.setItem("host", queryHost);
@@ -395,6 +403,7 @@ export default function Voting() {
   }, [code, userId]);
 
   useEffect(() => {
+    // show replan popup
     if (!session || session.stage !== "REPLAN_PROMPT" || !session.replanPrompt?.active) {
       setShowIncomingReplanPopup(false);
       setIncomingPromptId("");
@@ -424,6 +433,7 @@ export default function Voting() {
   }, [session, userId]);
 
   useEffect(() => {
+    // show pending itinerary requests as a popup for users who have not approved
     if (!pendingItineraryRequest?.requestId || pendingItineraryRequest.approvals?.includes(userId)) {
       setShowItineraryRequestPopup(false);
       if (!pendingItineraryRequest?.requestId) {

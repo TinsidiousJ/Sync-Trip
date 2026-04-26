@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 
 const API_BASE = "http://localhost:4000";
 
+// format dates and times
 function formatDateUk(dateValue) {
   if (!dateValue) return "";
   const parts = String(dateValue).split("-");
@@ -66,6 +67,7 @@ function formatTagLabel(tag) {
     .join(" ");
 }
 
+// itinerary preview
 export default function ItineraryPopup({ isOpen, sessionCode, onClose }) {
   const navigate = useNavigate();
   const [loading, setLoading] = useState(false);
@@ -75,6 +77,7 @@ export default function ItineraryPopup({ isOpen, sessionCode, onClose }) {
   const userId = localStorage.getItem("userId") || "";
   const host = localStorage.getItem("host") || "0";
 
+  // load latest items
   async function loadItinerary() {
     if (!sessionCode) return;
 
@@ -95,12 +98,14 @@ export default function ItineraryPopup({ isOpen, sessionCode, onClose }) {
     }
   }
 
+  // open full itinerary
   function openFullItineraryPage() {
     onClose?.();
     navigate(`/itinerary/${sessionCode}?userId=${userId}&host=${host}`);
   }
 
   useEffect(() => {
+    // refresh when opened
     if (isOpen) {
       loadItinerary();
     }

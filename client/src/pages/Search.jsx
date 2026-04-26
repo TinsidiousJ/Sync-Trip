@@ -7,6 +7,7 @@ import ItineraryPopup from "../components/ItineraryPopup.jsx";
 
 const API_BASE = "http://localhost:4000";
 
+// filters
 const ACCOMMODATION_TAGS = [
   "WIFI",
   "BREAKFAST_INCLUDED",
@@ -37,6 +38,7 @@ function hasActualPriceText(value) {
   return /\d/.test(String(value || ""));
 }
 
+// search page
 export default function Search() {
   const navigate = useNavigate();
   const { code } = useParams();
@@ -94,6 +96,7 @@ export default function Search() {
     }
   }
 
+  // keep session details
   async function loadSession({ initialiseMyFilters = false } = {}) {
     try {
       setError("");
@@ -154,6 +157,7 @@ export default function Search() {
     };
   }
 
+  // save filters
   async function saveFilters(nextFilters) {
     if (!userId) return;
 
@@ -181,6 +185,7 @@ export default function Search() {
     }
   }
 
+  // load options with filters
   async function fetchResults() {
     try {
       setError("");
@@ -203,6 +208,7 @@ export default function Search() {
     }
   }
 
+  // check whether user has already submitted  choice
   async function loadSubmissionStatus() {
     try {
       const res = await fetch(`${API_BASE}/sessions/${code}/submission-status?userId=${encodeURIComponent(userId)}`);
@@ -229,6 +235,7 @@ export default function Search() {
     }
   }
 
+  // save option
   async function submitChoice() {
     if (!selectedChoice) {
       setError("Select one option before submitting.");
@@ -319,6 +326,7 @@ export default function Search() {
   useEffect(() => {
     if (!code) return;
 
+    // save session for refreshes
     localStorage.setItem("sessionCode", code);
     if (queryUserId) localStorage.setItem("userId", queryUserId);
     if (queryHost) localStorage.setItem("host", queryHost);
@@ -333,6 +341,7 @@ export default function Search() {
   }, [didLoadMyFilters]);
 
   useEffect(() => {
+    // polling stage changes
     const timer = setInterval(() => {
       loadSubmissionStatus();
       loadSession();

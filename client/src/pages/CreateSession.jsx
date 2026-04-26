@@ -4,6 +4,7 @@ import PageLayout from "../components/PageLayout.jsx";
 
 const API_BASE = "http://localhost:4000";
 
+// Creating draft session and choose a destination
 export default function CreateSession() {
   const navigate = useNavigate();
 
@@ -46,6 +47,7 @@ export default function CreateSession() {
     }
   }
 
+  // dropdown suggestions
   async function fetchDestinationSuggestions(searchText) {
     const trimmedSearchText = String(searchText || "").trim();
     const requestId = suggestionRequestRef.current + 1;
@@ -90,6 +92,7 @@ export default function CreateSession() {
     }
   }
 
+  // srops changes on every type
   function handleDestinationChange(value) {
     setDestination(value);
     setSelectedDestination(null);
@@ -117,6 +120,7 @@ export default function CreateSession() {
     setError("");
   }
 
+  // create the drfat code
   async function createDraftIfNeeded() {
     if (sessionCode) return sessionCode;
 
@@ -132,6 +136,7 @@ export default function CreateSession() {
     return data.sessionCode;
   }
 
+  // activate the draft
   async function handleCreateSession(e) {
     e.preventDefault();
 
@@ -183,6 +188,7 @@ export default function CreateSession() {
   }, []);
 
   useEffect(() => {
+    // click away close
     function handleClickOutside(event) {
       if (suggestionBoxRef.current && !suggestionBoxRef.current.contains(event.target)) {
         setShowSuggestions(false);

@@ -6,6 +6,7 @@ import ItineraryPopup from "../components/ItineraryPopup.jsx";
 
 const API_BASE = "http://localhost:4000";
 
+// filter choices
 const TAGS_ACCOMMODATION = [
   "WIFI",
   "BREAKFAST_INCLUDED",
@@ -32,6 +33,7 @@ function formatTagLabel(tag) {
     .join(" ");
 }
 
+// lobby page for waiting users
 export default function Lobby() {
   const navigate = useNavigate();
   const { code } = useParams();
@@ -82,6 +84,7 @@ export default function Lobby() {
     }
   }
 
+  // load lobby state
   async function loadLobby({ initialiseMyFilters = false } = {}) {
     try {
       setError("");
@@ -135,6 +138,7 @@ export default function Lobby() {
     };
   }
 
+  // save filters
   async function saveFilters(nextFilters) {
     if (!userId) return;
 
@@ -194,6 +198,7 @@ export default function Lobby() {
   useEffect(() => {
     if (!code) return;
 
+    // keep loaded if refresh
     localStorage.setItem("sessionCode", code);
     if (queryUserId) localStorage.setItem("userId", queryUserId);
     if (queryHost) localStorage.setItem("host", queryHost);

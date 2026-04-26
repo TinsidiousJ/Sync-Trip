@@ -1,5 +1,6 @@
 import mongoose from "mongoose";
 
+// user data
 const userSchema = new mongoose.Schema(
   {
     userId: { type: String, required: true, index: true },

@@ -1,5 +1,6 @@
 import mongoose from "mongoose";
 
+// option data
 const optionSchema = new mongoose.Schema(
   {
     sessionCode: { type: String, required: true, index: true },

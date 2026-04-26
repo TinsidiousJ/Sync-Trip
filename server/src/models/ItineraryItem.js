@@ -1,5 +1,6 @@
 import mongoose from "mongoose";
 
+// itinerary item data
 const itineraryItemSchema = new mongoose.Schema(
   {
     sessionCode: { type: String, required: true, index: true },

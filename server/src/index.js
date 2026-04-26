@@ -14,6 +14,7 @@ import Vote from "./models/Vote.js";
 import ItineraryItem from "./models/ItineraryItem.js";
 import ItineraryChangeRequest from "./models/ItineraryChangeRequest.js";
 
+// server setup
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 dotenv.config({ path: path.resolve(__dirname, "../.env") });
 
@@ -24,6 +25,7 @@ app.use(express.json());
 const TRIPADVISOR_API_KEY = process.env.TRIPADVISOR_API_KEY || "";
 const YELP_API_KEY = process.env.YELP_API_KEY || "";
 
+// destination fallbacks
 const POPULAR_DESTINATIONS = [
   ["Amsterdam", "Netherlands"],
   ["Athens", "Greece"],
@@ -82,6 +84,7 @@ function generateSessionCode(length = 6) {
   return out;
 }
 
+// unique session code
 async function createUniqueSessionCode() {
   for (let i = 0; i < 10; i += 1) {
     const code = generateSessionCode(6);
@@ -91,6 +94,7 @@ async function createUniqueSessionCode() {
   throw new Error("Failed to generate unique session code");
 }
 
+// value helpers
 function safeNumber(value) {
   if (value === null || typeof value === "undefined" || value === "") return null;
   const n = Number(value);
@@ -133,6 +137,7 @@ function textIncludesAny(text, needles) {
   return needles.some((n) => hay.includes(String(n).toLowerCase()));
 }
 
+// infer filter tags
 function inferAccommodationTagsFromText(text) {
   const tags = [];
 
@@ -248,6 +253,7 @@ function inferActivityTags(categories = [], text = "") {
   return uniqueStrings(tags);
 }
 
+// check filters
 function optionMatchesFilters(option, filters) {
   const minRating = safeNumber(filters?.minRating);
   const selectedTags = Array.isArray(filters?.tags) ? filters.tags : [];
@@ -267,6 +273,7 @@ function optionMatchesFilters(option, filters) {
   };
 }
 
+// option output
 function serialisePublicOption(option, number = null) {
   return {
     optionId: String(option._id),
@@ -306,6 +313,7 @@ function serialiseItineraryItem(item, number = 1) {
   };
 }
 
+// replan state
 function buildEmptyReplanPrompt() {
   return {
     active: false,
@@ -348,6 +356,7 @@ function getEarliestApprovalTimestamp(summary) {
   return earliest;
 }
 
+// sort voting results
 function compareSummaryValues(a, b) {
   if (b.approvalRate !== a.approvalRate) return b.approvalRate - a.approvalRate;
   if (b.approvalCount !== a.approvalCount) return b.approvalCount - a.approvalCount;
@@ -386,6 +395,7 @@ function compareSummaryValues(a, b) {
   return 0;
 }
 
+// submission ownership
 async function getSubmissionOwnership(sessionCode) {
   const submissions = await Submission.find({ sessionCode }).lean();
 
@@ -434,6 +444,7 @@ async function getSubmissionOwnership(sessionCode) {
   };
 }
 
+// current round options
 async function getRoundOptions(session) {
   if (
     session.stage === "TIEBREAK" &&
@@ -446,6 +457,7 @@ async function getRoundOptions(session) {
   return Option.find({ sessionCode: session.sessionCode }).sort({ createdAt: 1 }).lean();
 }
 
+// voting totals
 async function getVotingComputation(sessionCode) {
   const session = await Session.findOne({ sessionCode }).lean();
   if (!session) throw new Error("Session not found");
@@ -535,6 +547,7 @@ async function getVotingComputation(sessionCode) {
   };
 }
 
+// destination helpers
 function normaliseDestinationQuery(text) {
   return String(text || "").trim().replace(/\s+/g, " ");
 }
@@ -577,6 +590,7 @@ function searchPopularDestinations(text, limit = 8) {
   return POPULAR_DESTINATIONS.filter((destination) => destinationStartsWith(destination, query)).slice(0, limit);
 }
 
+// tripadvisor destinations
 async function fetchTripadvisorGeoLocationRows(text, limit = 8) {
   if (!TRIPADVISOR_API_KEY) return [];
 
@@ -657,6 +671,7 @@ async function searchDestinations(text, limit = 8) {
   return mergeDestinationResults([popularResults, tripadvisorResults], query, limit);
 }
 
+// tripadvisor fields
 function extractTripadvisorImage(base = {}, item = {}, photos = []) {
   const firstPhoto = Array.isArray(photos) && photos.length > 0 ? photos[0] : null;
 
@@ -731,6 +746,7 @@ function extractTripadvisorPriceText(base = {}, item = {}) {
   return values.find(hasActualPriceText) || values[0] || "";
 }
 
+// tripadvisor hotels
 async function fetchTripadvisorLocationDetails(locationId) {
   const url =
     `https://api.content.tripadvisor.com/api/v1/location/${encodeURIComponent(locationId)}/details` +
@@ -939,6 +955,7 @@ async function searchTripadvisorHotels(destination, limit = 12) {
     .slice(0, limit);
 }
 
+// yelp activities
 function normaliseYelpActivity(business = {}) {
   const categories = Array.isArray(business.categories)
     ? business.categories.map((category) => category?.title || category?.alias).filter(Boolean)
@@ -1024,6 +1041,7 @@ async function searchYelpActivities(destination, limit = 12) {
   return detailedBusinesses.map(normaliseYelpActivity).filter((item) => item && item.title && item.sourceId);
 }
 
+// mock fallback
 function buildMockResults(sessionCode, planningType, destination) {
   if (planningType === "ACTIVITIES") {
     return [
@@ -1084,6 +1102,7 @@ function buildMockResults(sessionCode, planningType, destination) {
   ];
 }
 
+// add winner
 async function addWinnerToItinerary(sessionCode, winningOption) {
   if (!winningOption?._id) return null;
 
@@ -1120,6 +1139,7 @@ async function addWinnerToItinerary(sessionCode, winningOption) {
   return created;
 }
 
+// sort itinerary
 async function applyAutoSortToItinerary(sessionCode) {
   const items = await ItineraryItem.find({ sessionCode }).sort({ orderIndex: 1, createdAt: 1 });
 
@@ -1150,6 +1170,7 @@ async function applyAutoSortToItinerary(sessionCode) {
   return finalOrder;
 }
 
+// start next round
 async function beginNextPlanningRound(session, acceptedUserIds = []) {
   await Submission.deleteMany({ sessionCode: session.sessionCode });
   await Vote.deleteMany({ sessionCode: session.sessionCode });
@@ -1171,6 +1192,7 @@ async function beginNextPlanningRound(session, acceptedUserIds = []) {
   };
 }
 
+// replan routes
 app.post("/sessions/:code/replan/request", async (req, res) => {
   try {
     const sessionCode = req.params.code;
@@ -1296,6 +1318,7 @@ app.post("/sessions/:code/replan/respond", async (req, res) => {
   }
 });
 
+// health and destinations
 app.get("/health", (req, res) => {
   res.json({
     ok: true,
@@ -1320,6 +1343,7 @@ app.get("/locations/destinations", async (req, res) => {
   }
 });
 
+// session routes
 app.post("/sessions/draft", async (req, res) => {
   try {
     const sessionCode = await createUniqueSessionCode();
@@ -1482,6 +1506,7 @@ app.get("/sessions/:code/lobby", async (req, res) => {
   }
 });
 
+// filters and search
 app.put("/sessions/:code/filters", async (req, res) => {
   try {
     const sessionCode = req.params.code;
@@ -1571,6 +1596,7 @@ app.get("/sessions/:code/options/search", async (req, res) => {
   }
 });
 
+// submissions
 app.post("/sessions/:code/submission", async (req, res) => {
   try {
     const sessionCode = req.params.code;
@@ -1717,6 +1743,7 @@ app.get("/sessions/:code/submission-status", async (req, res) => {
   }
 });
 
+// voting routes
 app.get("/sessions/:code/voting/candidates", async (req, res) => {
   try {
     const sessionCode = req.params.code;
@@ -1961,6 +1988,7 @@ app.get("/sessions/:code/voting-status", async (req, res) => {
   }
 });
 
+// itinerary routes
 app.get("/sessions/:code/itinerary", async (req, res) => {
   try {
     const sessionCode = req.params.code;
@@ -2277,6 +2305,7 @@ app.post("/sessions/:code/itinerary/requests/:requestId/approve", async (req, re
   }
 });
 
+// start server
 async function start() {
   try {
     const uri = process.env.MONGODB_URI;

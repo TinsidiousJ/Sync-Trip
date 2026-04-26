@@ -2,6 +2,7 @@ import React from "react";
 import { Link } from "react-router-dom";
 import PageLayout from "../components/PageLayout.jsx";
 
+// first screen for starting or joining a trip
 export default function Landing() {
   return (
     <PageLayout

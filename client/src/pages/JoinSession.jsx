@@ -4,6 +4,7 @@ import PageLayout from "../components/PageLayout.jsx";
 
 const API_BASE = "http://localhost:4000";
 
+// form for joining  sessiom
 export default function JoinSession() {
   const navigate = useNavigate();
 
@@ -11,6 +12,7 @@ export default function JoinSession() {
   const [displayName, setDisplayName] = useState("");
   const [error, setError] = useState("");
 
+  // validate the details and add  user
   async function onJoin(e) {
     e.preventDefault();
     setError("");

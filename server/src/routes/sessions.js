@@ -1,5 +1,6 @@
 import mongoose from "mongoose";
 
+// session schema
 const sessionSchema = new mongoose.Schema(
   {
     sessionCode: {

@@ -11,6 +11,7 @@ import Search from "./pages/Search.jsx";
 import Voting from "./pages/Voting.jsx";
 import Itinerary from "./pages/Itinerary.jsx";
 
+// app routes
 ReactDOM.createRoot(document.getElementById("root")).render(
   <React.StrictMode>
     <BrowserRouter>

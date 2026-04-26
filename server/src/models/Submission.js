@@ -1,5 +1,6 @@
 import mongoose from "mongoose";
 
+// submitted option
 const submissionSchema = new mongoose.Schema(
   {
     sessionCode: { type: String, required: true, index: true },

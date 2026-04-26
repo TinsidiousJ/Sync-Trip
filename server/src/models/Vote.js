@@ -1,5 +1,6 @@
 import mongoose from "mongoose";
 
+// vote data
 const voteSchema = new mongoose.Schema(
   {
     sessionCode: { type: String, required: true, index: true },

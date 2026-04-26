@@ -1,6 +1,7 @@
 import React from "react";
 import { Link, useLocation } from "react-router-dom";
 
+// basic page layout
 export default function PageLayout({ pageTitle, pageSubtitle, children, headerAction = null }) {
   const location = useLocation();
 

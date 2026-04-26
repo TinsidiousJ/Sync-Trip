@@ -5,6 +5,7 @@ import ConfirmPopup from "../components/ConfirmPopup.jsx";
 
 const API_BASE = "http://localhost:4000";
 
+// format saved date
 function formatDateUk(dateValue) {
   if (!dateValue) return "";
   const parts = String(dateValue).split("-");
@@ -72,6 +73,7 @@ function isScheduledItem(item) {
   return Boolean(item?.scheduledDate || item?.scheduledTime);
 }
 
+// full itinerary page
 export default function Itinerary() {
   const navigate = useNavigate();
   const { code } = useParams();
@@ -115,6 +117,7 @@ export default function Itinerary() {
     }
   }
 
+  // load itinerary items
   async function loadItinerary() {
     try {
       setError("");
@@ -136,6 +139,7 @@ export default function Itinerary() {
     }
   }
 
+  // maintain session state
   async function loadSessionStage() {
     try {
       const res = await fetch(`${API_BASE}/sessions/${code}/lobby`);
@@ -161,6 +165,7 @@ export default function Itinerary() {
     window.open(`${API_BASE}/sessions/${code}/itinerary/export`, "_blank");
   }
 
+  // open the date and time editor
   function beginEditSchedule(item) {
     setEditingItemId(item.itineraryItemId);
     setEditDate(item.scheduledDate || "");
@@ -175,6 +180,7 @@ export default function Itinerary() {
     setEditTime("");
   }
 
+  // save date and time
   async function saveSchedule(itineraryItemId) {
     try {
       setError("");
@@ -204,6 +210,7 @@ export default function Itinerary() {
     }
   }
 
+  // date and time values
   async function clearSchedule(itineraryItemId) {
     try {
       setError("");
@@ -233,6 +240,7 @@ export default function Itinerary() {
     }
   }
 
+  // request removing an item
   async function requestRemove(itineraryItemId) {
     if (!itineraryItemId) return;
 
@@ -260,6 +268,7 @@ export default function Itinerary() {
     }
   }
 
+  // move unscheduled activities
   async function moveItem(itineraryItemId, direction) {
     if (!itineraryItemId || !direction) return;
 
@@ -286,6 +295,7 @@ export default function Itinerary() {
     }
   }
 
+  // approve the change request
   async function approveRequest() {
     if (!pendingRequest?.requestId) return;
 
@@ -369,6 +379,7 @@ export default function Itinerary() {
   useEffect(() => {
     if (!code) return;
 
+    // keep session on refresh
     localStorage.setItem("sessionCode", code);
     if (queryUserId) localStorage.setItem("userId", queryUserId);
     if (queryHost) localStorage.setItem("host", queryHost);
@@ -387,6 +398,7 @@ export default function Itinerary() {
   }, [code, userId]);
 
   useEffect(() => {
+    // show the replan popup
     if (!session || session.stage !== "REPLAN_PROMPT" || !session.replanPrompt?.active) {
       setShowIncomingReplanPopup(false);
       setIncomingPromptId("");
@@ -416,6 +428,7 @@ export default function Itinerary() {
   }, [session, userId]);
 
   useEffect(() => {
+    // show pending itinerary requests
     if (!pendingRequest?.requestId || pendingRequest.currentUserHasApproved) {
       setShowItineraryRequestPopup(false);
       if (!pendingRequest?.requestId) {
